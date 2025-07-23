@@ -1,0 +1,125 @@
+(define (problem LIBERO_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language pick up the black bowl between the plate and the ramekin and place it on the plate)
+    (:regions
+      (a_region
+          (:target main_table)
+          (:ranges (
+              (-0.21000000000000002 -0.21000000000000002 -0.19 -0.19)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (b_region
+          (:target main_table)
+          (:ranges (
+              (-0.21000000000000002 -0.01 -0.19 0.01)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (c_region
+          (:target main_table)
+          (:ranges (
+              (-0.21000000000000002 0.19 -0.19 0.21000000000000002)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (d_region
+          (:target main_table)
+          (:ranges (
+              (-0.01 -0.21000000000000002 0.01 -0.19)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (e_region
+          (:target main_table)
+          (:ranges (
+              (-0.01 -0.01 0.01 0.01)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (f_region
+          (:target main_table)
+          (:ranges (
+              (-0.01 0.19 0.01 0.21000000000000002)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (g_region
+          (:target main_table)
+          (:ranges (
+              (0.13999999999999999 -0.21000000000000002 0.16 -0.19)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (h_region
+          (:target main_table)
+          (:ranges (
+              (0.13999999999999999 -0.01 0.16 0.01)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (i_region
+          (:target main_table)
+          (:ranges (
+              (0.13999999999999999 0.19 0.16 0.21000000000000002)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+    )
+  (:fixtures
+    main_table - table
+  )
+  (:objects
+    akita_black_bowl_1 - akita_black_bowl
+    glazed_rim_porcelain_ramekin_1 - glazed_rim_porcelain_ramekin
+    plate_1 - plate
+  )
+  (:obj_of_interest
+    akita_black_bowl_1
+    plate_1
+  )
+  (:init
+    (On akita_black_bowl_1 main_table_e_region)
+    (On plate_1 main_table_h_region)
+    (On glazed_rim_porcelain_ramekin_1 main_table_b_region)
+  )
+  (:goal
+    (And (On akita_black_bowl_1 plate_1))
+  )
+)
