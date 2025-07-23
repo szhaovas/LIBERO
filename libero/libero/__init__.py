@@ -1,9 +1,11 @@
 import os
 import yaml
+import libero
 
 # This is a default path for localizing all the benchmark related files
 libero_config_path = os.environ.get(
-    "LIBERO_CONFIG_PATH", os.path.expanduser("~/.libero")
+    "LIBERO_CONFIG_PATH",
+    os.path.join(os.path.dirname(libero.__file__), ".libero"),
 )
 config_file = os.path.join(libero_config_path, "config.yaml")
 
@@ -50,7 +52,9 @@ def get_libero_path(query_key):
     return config[query_key]
 
 
-def set_libero_default_path(custom_location=os.path.dirname(os.path.abspath(__file__))):
+def set_libero_default_path(
+    custom_location=os.path.dirname(os.path.abspath(__file__)),
+):
     print(
         f"[Warning] You are changing the default path for Libero config. This will affect all the paths in the config file."
     )
@@ -88,7 +92,9 @@ if not os.path.exists(config_file):
                 os.makedirs(full_custom_dataset_path)
             default_path_dict["datasets"] = full_custom_dataset_path
     print("Initializing the default config file...")
-    print(f"The following information is stored in the config file: {config_file}")
+    print(
+        f"The following information is stored in the config file: {config_file}"
+    )
     # write all the paths into a yaml file
     with open(config_file, "w") as f:
         yaml.dump(default_path_dict, f)

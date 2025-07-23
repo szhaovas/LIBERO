@@ -1,9 +1,11 @@
 import os
 import yaml
+import libero
 
 # This is a default path for localizing all the benchmark related files
 libero_config_path = os.environ.get(
-    "LIBERO_CONFIG_PATH", os.path.expanduser("~/.libero")
+    "LIBERO_CONFIG_PATH",
+    os.path.join(os.path.dirname(libero.__file__), ".libero"),
 )
 config_file = os.path.join(libero_config_path, "config.yaml")
 
