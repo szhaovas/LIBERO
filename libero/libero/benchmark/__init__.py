@@ -1,12 +1,13 @@
 import abc
 import os
 import glob
-import random
 import torch
 
-from typing import List, NamedTuple, Type
+from typing import NamedTuple
 from libero.libero import get_libero_path
 from libero.libero.benchmark.libero_suite_task_map import libero_task_map
+
+import re
 
 BENCHMARK_MAPPING = {}
 
@@ -59,25 +60,52 @@ libero_suites = [
     "libero_goal",
     "libero_90",
     "libero_10",
+    "custom",
 ]
 task_maps = {}
 max_len = 0
 for libero_suite in libero_suites:
     task_maps[libero_suite] = {}
 
-    for task in libero_task_map[libero_suite]:
-        language = grab_language_from_filename(task + ".bddl")
-        task_maps[libero_suite][task] = Task(
-            name=task,
-            language=language,
-            problem="Libero",
-            problem_folder=libero_suite,
-            bddl_file=f"{task}.bddl",
-            init_states_file=f"{task}.pruned_init",
-        )
+    if libero_suite == "custom":
+        language_pattern = re.compile(r"\(:language\s+(.*?)\)", re.DOTALL)
+        for bddl_filename in glob.glob(
+            f"{get_libero_path('bddl_files')}/custom/*.bddl"
+        ):
+            with open(bddl_filename, "r", encoding="utf-8") as f:
+                content = f.read()
 
-        # print(language, "\n", f"{task}.bddl", "\n")
-        # print("")
+            language = language_pattern.findall(content)
+            assert (
+                len(language) == 1,
+                f"Found {len(language)} :language predicates in {bddl_filename}"
+                f" but expected exactly one.",
+            )
+            language = language[0]
+
+            task_maps[libero_suite][bddl_filename] = Task(
+                name=bddl_filename,
+                language=language,
+                problem="Libero",
+                problem_folder="custom",
+                bddl_file=bddl_filename,
+                init_states_file=None,
+            )
+
+    else:
+        for task in libero_task_map[libero_suite]:
+            language = grab_language_from_filename(task + ".bddl")
+            task_maps[libero_suite][task] = Task(
+                name=task,
+                language=language,
+                problem="Libero",
+                problem_folder=libero_suite,
+                bddl_file=f"{task}.bddl",
+                init_states_file=f"{task}.pruned_init",
+            )
+
+            # print(language, "\n", f"{task}.bddl", "\n")
+            # print("")
 
 
 task_orders = [
@@ -114,10 +142,12 @@ class Benchmark(abc.ABC):
 
     def _make_benchmark(self):
         tasks = list(task_maps[self.name].values())
-        if self.name == "libero_90":
+        if self.name in ["libero_90", "custom"]:
             self.tasks = tasks
         else:
-            print(f"[info] using task orders {task_orders[self.task_order_index]}")
+            print(
+                f"[info] using task orders {task_orders[self.task_order_index]}"
+            )
             self.tasks = [tasks[i] for i in task_orders[self.task_order_index]]
         self.n_tasks = len(self.tasks)
 
@@ -146,7 +176,9 @@ class Benchmark(abc.ABC):
             0 <= i and i < self.n_tasks
         ), f"[error] task number {i} is outer of range {self.n_tasks}"
         # this path is relative to the datasets folder
-        demo_path = f"{self.tasks[i].problem_folder}/{self.tasks[i].name}_demo.hdf5"
+        demo_path = (
+            f"{self.tasks[i].problem_folder}/{self.tasks[i].name}_demo.hdf5"
+        )
         return demo_path
 
     def get_task(self, i):
@@ -156,6 +188,9 @@ class Benchmark(abc.ABC):
         return self.task_embs[i]
 
     def get_task_init_states(self, i):
+        if self.tasks[i].init_states_file is None:
+            return None
+
         init_states_path = os.path.join(
             get_libero_path("init_states"),
             self.tasks[i].problem_folder,
@@ -216,4 +251,12 @@ class LIBERO_100(Benchmark):
     def __init__(self, task_order_index=0):
         super().__init__(task_order_index=task_order_index)
         self.name = "libero_100"
+        self._make_benchmark()
+
+
+@register_benchmark
+class CUSTOM(Benchmark):
+    def __init__(self, task_order_index=0):
+        super().__init__(task_order_index=task_order_index)
+        self.name = "custom"
         self._make_benchmark()
