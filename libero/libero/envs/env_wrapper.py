@@ -95,6 +95,10 @@ class ControlEnv:
                 success = True
             except RandomizationError:
                 pass
+            except ValueError:
+                # Let upstream handle failure if it is caused by validity check
+                ret = None
+                success = True
             finally:
                 continue
 

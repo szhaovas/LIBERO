@@ -1,4 +1,4 @@
-from .libero_tabletop_manipulation import Libero_Tabletop_Manipulation
+from .libero_tabletop_manipulation import Libero_Tabletop_Manipulation, Libero_Spatial_Attack
 from .libero_coffee_table_manipulation import Libero_Coffee_Table_Manipulation
 from .libero_floor_manipulation import Libero_Floor_Manipulation
 from .libero_study_tabletop_manipulation import Libero_Study_Tabletop_Manipulation

@@ -1,10 +1,14 @@
-from robosuite.utils.mjcf_utils import new_site
+from itertools import chain, combinations
+
+import numpy as np
+import robosuite.utils.transform_utils as T
 from libero.libero.envs.bddl_base_domain import BDDLBaseDomain, register_problem
-from libero.libero.envs.robots import *
 from libero.libero.envs.objects import *
 from libero.libero.envs.predicates import *
 from libero.libero.envs.regions import *
+from libero.libero.envs.robots import *
 from libero.libero.envs.utils import rectangle2xyrange
+from robosuite.utils.mjcf_utils import new_site
 
 
 @register_problem
@@ -210,3 +214,138 @@ class Libero_Tabletop_Manipulation(BDDLBaseDomain):
                 0.7702690958976746,
             ],
         )
+
+
+
+@register_problem
+class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
+    def __init__(self, bddl_file_name, *args, params, **kwargs):
+        super().__init__(bddl_file_name, *args, **kwargs)
+
+        # params have to be processed at the end of reset() or they will get 
+        # overwritten 
+        self._params = params
+            
+    @property
+    def params(self):
+        '''For now params should be an array listing object coordinates in the 
+        following order:
+          [
+              akita_black_bowl_1_x, akita_black_bowl_1_y,
+              akita_black_bowl_2_x, akita_black_bowl_2_y,
+              cookies_1_x, cookies_1_y,
+              glazed_rim_porcelain_ramekin_1_x,
+              glazed_rim_porcelain_ramekin_1_y,
+              plate_1_x, plate_1_y
+          ]
+        where akita_black_bowl_1_x, akita_black_bowl_1_y are relative to the
+        ramekin's position (i.e. glazed_rim_porcelain_ramekin_1_x/y), and the
+        remaining coordinates are relative to the table's position (i.e. same
+        convention as in the original libero_spatial task suite).
+        '''
+        return self._params
+    
+    def _check_valid_placement(self):
+        """Checks that the environment is valid. Right now it just checks that 
+        no object overlap and all objects are within the table bounds.
+
+        Raises:
+            ValueError
+        """
+        # Check the movable objects do not overlap
+        for this_obj, other_obj in combinations(
+            chain(self.objects_dict.values(), self.fixtures_dict.values()), 2
+        ):
+            this_x, this_y, this_z = self.sim.data.body_xpos[
+                self.obj_body_id[this_obj.name]
+            ]
+            other_x, other_y, other_z = self.sim.data.body_xpos[
+                self.obj_body_id[other_obj.name]
+            ]
+            if (
+                np.linalg.norm((this_x - other_x, this_y - other_y))
+                <= this_obj.horizontal_radius + other_obj.horizontal_radius
+            ) and (
+                this_z - other_z
+                <= other_obj.top_offset[-1] - this_obj.bottom_offset[-1]
+            ):
+                raise ValueError(
+                    "Overlapping objects:\n"
+                    f"\t {this_obj.name} at {[this_x, this_y, this_z]}\n"
+                    f"\t {other_obj.name} at {[other_x, other_y, other_z]}"
+                )
+
+        # Check everything is within the table bounds
+        table_bounds = np.asarray(self.table_full_size[:2]) / 2
+        for movable_obj in self.objects_dict.values():
+            obj_xy = self.sim.data.body_xpos[
+                self.obj_body_id[movable_obj.name]
+            ][:2]
+            if np.any(
+                (np.abs(obj_xy) + movable_obj.horizontal_radius) > table_bounds
+            ):
+                raise ValueError(
+                    f"{movable_obj.name} at {obj_xy} outside of table bounds "
+                    f"+-{table_bounds}"
+                )
+    
+
+    def reset(self):
+        """Essentially the same reset as in robosuite MujocoEnv except it 
+        modifies the environment according to :attr:`params` at the end.
+
+        Returns:
+            observations (dict): Same as MujocoEnv reset.
+        """
+        observations = super().reset()
+
+        # Update the environment with params
+        for idx, movable_obj in enumerate(self.objects_dict.values()):
+            # keep the original z-coordinate and quaternion
+            orig_z = self.sim.data.body_xpos[self.obj_body_id[movable_obj.name]][-1]
+            orig_quat = np.asarray(T.convert_quat(self.sim.data.body_xquat[self.obj_body_id[movable_obj.name]],to="xyzw",))
+
+            # TODO: Set akita_black_bowl_1_x/y relative to ramekin's coordinates
+            self.sim.data.set_joint_qpos(movable_obj.joints[-1],np.concatenate([np.asarray(self.params[2 * idx : 2 * idx + 2]),[orig_z],orig_quat,]),)
+
+        # Place the objects and check for validity
+        self.sim.forward()
+        self._check_valid_placement()
+
+        return observations
+
+            
+    def compute_spread_similarity(self):
+        """Computes object clustering measures.
+
+        Returns:
+            Spread: A float between [0, 1]. The mean pairwise distance to the
+                nearest neighbor normalized by the maximum possible pairwise
+                distance within table bounds.
+            Similarity: A float between [0, 1]. The average pairwise distance
+                normalized by the maximum possible pairwise distance within
+                table bounds. This is subtracted from 1 so that a higher value
+                means more similar.
+        """
+        max_dist = np.linalg.norm(self.table_full_size[:2])
+
+        pairwise_dists = np.zeros((len(self.objects_dict), len(self.objects_dict)))
+        for i, this_obj in enumerate(self.objects_dict.values()):
+            this_xy = self.sim.data.body_xpos[self.obj_body_id[this_obj.name]][
+                :1
+            ]
+            for j, other_obj in enumerate(self.objects_dict.values()):
+                other_xy = self.sim.data.body_xpos[
+                    self.obj_body_id[other_obj.name]
+                ][:2]
+                pairwise_dists[i, j] = (
+                    np.linalg.norm(this_xy - other_xy) / max_dist
+                )
+
+        mean_dist = np.mean(pairwise_dists)
+
+        # Don't count distance to self when taking min
+        np.fill_diagonal(pairwise_dists, np.inf)
+        min_dists = np.min(pairwise_dists, axis=1)
+
+        return np.mean(min_dists), 1 - mean_dist
