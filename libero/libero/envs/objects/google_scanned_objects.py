@@ -1,17 +1,16 @@
 import os
-import numpy as np
+import pathlib
 import re
 
+import numpy as np
 from robosuite.models.objects import MujocoXMLObject
 from robosuite.utils.mjcf_utils import xml_path_completion
-
-import pathlib
 
 absolute_path = pathlib.Path(__file__).parent.parent.parent.absolute()
 
 from libero.libero.envs.base_object import (
-    register_visual_change_object,
     register_object,
+    register_visual_change_object,
 )
 
 
@@ -59,11 +58,19 @@ class AkitaBlackBowl(GoogleScannedObject):
     def __init__(self, name="akita_black_bowl", obj_name="akita_black_bowl"):
         super().__init__(name, obj_name)
 
+    @property
+    def horizontal_radius(self):
+        return 0.05
+
 
 @register_object
 class Plate(GoogleScannedObject):
     def __init__(self, name="plate", obj_name="plate"):
         super().__init__(name, obj_name)
+
+    @property
+    def horizontal_radius(self):
+        return 0.05
 
 
 @register_object
@@ -86,3 +93,7 @@ class GlazedRimPorcelainRamekin(GoogleScannedObject):
         obj_name="glazed_rim_porcelain_ramekin",
     ):
         super().__init__(name, obj_name)
+
+    @property
+    def horizontal_radius(self):
+        return 0.04

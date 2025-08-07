@@ -1,10 +1,10 @@
 import os
+import pathlib
 import re
+
 import numpy as np
 from robosuite.models.objects import MujocoXMLObject
 from robosuite.utils.mjcf_utils import array_to_string
-
-import pathlib
 
 absolute_path = pathlib.Path(__file__).parent.parent.parent.absolute()
 
@@ -71,6 +71,10 @@ class ChocolatePudding(HopeBaseObject):
 class Cookies(HopeBaseObject):
     def __init__(self, name="cookies", obj_name="cookies"):
         super().__init__(name, obj_name)
+    
+    @property
+    def horizontal_radius(self):
+        return 0.04
 
 
 @register_object

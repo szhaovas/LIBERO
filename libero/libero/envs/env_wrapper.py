@@ -1,12 +1,11 @@
 import os
-import numpy as np
-import robosuite as suite
-import matplotlib.cm as cm
-
-from robosuite.utils.errors import RandomizationError
 
 import libero.libero.envs.bddl_utils as BDDLUtils
+import matplotlib.cm as cm
+import numpy as np
+import robosuite as suite
 from libero.libero.envs import *
+from robosuite.utils.errors import RandomizationError
 
 
 class ControlEnv:
@@ -95,8 +94,9 @@ class ControlEnv:
                 success = True
             except RandomizationError:
                 pass
-            except ValueError:
+            except ValueError as e:
                 # Let upstream handle failure if it is caused by validity check
+                print(e)
                 ret = None
                 success = True
             finally:

@@ -219,6 +219,7 @@ class Libero_Tabletop_Manipulation(BDDLBaseDomain):
 
 @register_problem
 class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
+    table_bounds = [0.3, 0.38]
     def __init__(self, bddl_file_name, *args, params, **kwargs):
         super().__init__(bddl_file_name, *args, **kwargs)
 
@@ -276,17 +277,17 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 )
 
         # Check everything is within the table bounds
-        table_bounds = np.asarray(self.table_full_size[:2]) / 2
+        # NOTE: This is makes sure the object shows up in camero
         for movable_obj in self.objects_dict.values():
             obj_xy = self.sim.data.body_xpos[
                 self.obj_body_id[movable_obj.name]
             ][:2]
             if np.any(
-                (np.abs(obj_xy) + movable_obj.horizontal_radius) > table_bounds
+                (np.abs(obj_xy) + movable_obj.horizontal_radius) > self.table_bounds
             ):
                 raise ValueError(
                     f"{movable_obj.name} at {obj_xy} outside of table bounds "
-                    f"+-{table_bounds}"
+                    f"+-{self.table_bounds}"
                 )
     
 
@@ -297,20 +298,28 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         Returns:
             observations (dict): Same as MujocoEnv reset.
         """
-        observations = super().reset()
+        super().reset()
 
         # Update the environment with params
         for idx, movable_obj in enumerate(self.objects_dict.values()):
-            # keep the original z-coordinate and quaternion
-            orig_z = self.sim.data.body_xpos[self.obj_body_id[movable_obj.name]][-1]
-            orig_quat = np.asarray(T.convert_quat(self.sim.data.body_xquat[self.obj_body_id[movable_obj.name]],to="xyzw",))
-
+            # Only update the objects' xy coordinates
             # TODO: Set akita_black_bowl_1_x/y relative to ramekin's coordinates
-            self.sim.data.set_joint_qpos(movable_obj.joints[-1],np.concatenate([np.asarray(self.params[2 * idx : 2 * idx + 2]),[orig_z],orig_quat,]),)
+            start_i, _ = self.sim.data.model.get_joint_qpos_addr(
+                movable_obj.joints[-1]
+            )
+            self.sim.data.qpos[start_i : start_i + 2] = self.params[
+                2 * idx : 2 * idx + 2
+            ]
 
         # Place the objects and check for validity
         self.sim.forward()
         self._check_valid_placement()
+
+        observations = (
+            self.viewer._get_observations(force_update=True)
+            if self.viewer_get_obs
+            else self._get_observations(force_update=True)
+        )
 
         return observations
 
@@ -327,7 +336,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 table bounds. This is subtracted from 1 so that a higher value
                 means more similar.
         """
-        max_dist = np.linalg.norm(self.table_full_size[:2])
+        max_dist = np.linalg.norm(2*self.table_bounds)
 
         pairwise_dists = np.zeros((len(self.objects_dict), len(self.objects_dict)))
         for i, this_obj in enumerate(self.objects_dict.values()):
