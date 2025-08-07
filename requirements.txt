@@ -13,3 +13,6 @@
  matplotlib==3.5.3 
  cloudpickle==2.1.0
  gym==0.25.2
+ ribs==0.7.1
+ imageio
+ fire

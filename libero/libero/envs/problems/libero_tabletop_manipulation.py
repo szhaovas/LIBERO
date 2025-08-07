@@ -277,7 +277,6 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 )
 
         # Check everything is within the table bounds
-        # NOTE: This is makes sure the object shows up in camero
         for movable_obj in self.objects_dict.values():
             obj_xy = self.sim.data.body_xpos[
                 self.obj_body_id[movable_obj.name]
