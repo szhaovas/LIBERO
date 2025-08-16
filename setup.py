@@ -3,7 +3,7 @@ from os import path
 
 from setuptools import find_packages, setup
 
-this_directory = path.abspath(path.dirname(__file__))
+this_directory = path.dirname(__file__)
 with open(path.join(this_directory, "./README.md"), encoding="utf-8") as f:
     lines = f.readlines()
 
@@ -11,7 +11,7 @@ with open(path.join(this_directory, "./README.md"), encoding="utf-8") as f:
 lines = [x for x in lines if ".png" not in x]
 long_description = "".join(lines)
 
-proj_root = path.join(this_directory, "libero")
+proj_root = path.relpath(this_directory)
 setup(
     name="libero",
     packages=find_packages(where=proj_root),
