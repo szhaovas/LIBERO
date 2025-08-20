@@ -220,12 +220,23 @@ class Libero_Tabletop_Manipulation(BDDLBaseDomain):
 @register_problem
 class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
     table_bounds = [0.3, 0.38]
-    def __init__(self, bddl_file_name, *args, params, **kwargs):
+    def __init__(self, bddl_file_name, *args, params, repair_env=False, repair_config=None, **kwargs):
         super().__init__(bddl_file_name, *args, **kwargs)
 
         # params have to be processed at the end of reset() or they will get 
         # overwritten 
         self._params = params
+
+        if repair_env:
+            assert repair_config is not None
+            from docplex.mp.model import Context, Model
+            context = Context.make_default_context()
+            context.cplex_parameters.threads = 1
+            context.cplex_parameters.dettimelimit = repair_config['time_limit']
+            context.cplex_parameters.randomseed = repair_config['seed']
+            context.cplex_parameters.optimalitytarget = 3
+            self._mdl = Model(context=context)
+            self._repair_config = repair_config
             
     @property
     def params(self):
@@ -288,7 +299,119 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                     f"{movable_obj.name} at {obj_xy} outside of table bounds "
                     f"+-{self.table_bounds}"
                 )
+            
+    def _construct_problem(self, mdl):
+        """Constructs a CPLEX problem whose optimum corresponds to when all 
+        movable objects are the closest to their starting locations while being 
+        beyond a distance threshold to each other and all fixtures.
+
+        We cannot formulate this as a simple constrained optimization because 
+        distance >= threshold is a non-convex constraint, which is not supported 
+        by CPLEX. Instead, we regularize the objective (distance to starting 
+        locations) with distances among objects, low-capped at 0 when the 
+        distance is above threshold.
+        """
+        costs = []
+        for this_obj, other_obj in combinations(
+            chain(self.objects_dict.values(), self.fixtures_dict.values()), 2
+        ):
+            this_x, this_y, _ = self.sim.data.body_xpos[
+                self.obj_body_id[this_obj.name]
+            ]
+            this_movable = this_obj.name in self.objects_dict
+            other_x, other_y, _ = self.sim.data.body_xpos[
+                self.obj_body_id[other_obj.name]
+            ]
+            other_movable = other_obj.name in self.objects_dict
     
+            if this_movable:
+                this_x_var = mdl.get_var_by_name(f"{this_obj.name}_x")
+                this_y_var = mdl.get_var_by_name(f"{this_obj.name}_y")
+                if this_x_var is None:
+                    this_x_var = mdl.continuous_var(
+                        name=f"{this_obj.name}_x",
+                        lb=-self.table_bounds[0]+this_obj.horizontal_radius,
+                        ub=self.table_bounds[0]-this_obj.horizontal_radius
+                    )
+                    this_y_var = mdl.continuous_var(
+                        name=f"{this_obj.name}_y",
+                        lb=-self.table_bounds[1]+this_obj.horizontal_radius,
+                        ub=self.table_bounds[1]-this_obj.horizontal_radius
+                    )
+                    costs.append((this_x_var-this_x)**2+(this_y_var-this_y)**2)
+            else:
+                this_x_var, this_y_var = this_x, this_y
+            
+            if other_movable:
+                other_x_var = mdl.get_var_by_name(f"{other_obj.name}_x")
+                other_y_var = mdl.get_var_by_name(f"{other_obj.name}_y")
+                if other_x_var is None:
+                    other_x_var = mdl.continuous_var(
+                        name=f"{other_obj.name}_x",
+                        lb=-self.table_bounds[0]+other_obj.horizontal_radius,
+                        ub=self.table_bounds[0]-other_obj.horizontal_radius
+                    )
+                    other_y_var = mdl.continuous_var(
+                        name=f"{other_obj.name}_y",
+                        lb=-self.table_bounds[1]+other_obj.horizontal_radius,
+                        ub=self.table_bounds[1]-other_obj.horizontal_radius
+                    )
+                    costs.append((other_x_var-other_x)**2+(other_y_var-other_y)**2)
+            else:
+                other_x_var, other_y_var = other_x, other_y
+
+            if this_movable or other_movable:
+                # Regularize the objective with distance between objects, 
+                # low-capped at 0 when the distance is above threshold.
+                #     |x1 - x2| >= threshold
+                #     => cost += max(threshold - |x1 - x2|, 0)
+                
+                threshold = this_obj.horizontal_radius + other_obj.horizontal_radius + 1e-6
+
+                # abs(x1 - x2)
+                abs_x_var = mdl.continuous_var(
+                    name=f"{this_obj.name}_{other_obj.name}_ax", lb=0
+                )
+                mdl.add_constraint(abs_x_var >= this_x_var - other_x_var)
+                mdl.add_constraint(abs_x_var >= other_x_var - this_x_var)
+
+                # max(threshold - abs_x_var, 0)
+                hinge_x_var = mdl.continuous_var(
+                    name=f"{this_obj.name}_{other_obj.name}_hx"
+                )
+                mdl.add_constraint(hinge_x_var >= threshold - abs_x_var)
+                
+                costs.append(hinge_x_var)
+
+                # abs(y1 - y2)
+                abs_y_var = mdl.continuous_var(
+                    name=f"{this_obj.name}_{other_obj.name}_ay", lb=0
+                )
+                mdl.add_constraint(abs_y_var >= this_y_var - other_y_var)
+                mdl.add_constraint(abs_y_var >= other_y_var - this_y_var)
+
+                # max(threshold - abs_y_var, 0)
+                hinge_y_var = mdl.continuous_var(
+                    name=f"{this_obj.name}_{other_obj.name}_hy", lb=0
+                )
+                mdl.add_constraint(hinge_y_var >= threshold - abs_y_var)
+                
+                costs.append(hinge_y_var)
+        
+        mdl.minimize(sum(costs))
+
+    def _place_objects(self, params):
+        for idx, movable_obj in enumerate(self.objects_dict.values()):
+            # Only update the objects' xy coordinates
+            # TODO: Set akita_black_bowl_1_x/y relative to ramekin's coordinates
+            start_i, _ = self.sim.data.model.get_joint_qpos_addr(
+                movable_obj.joints[-1]
+            )
+            self.sim.data.qpos[start_i : start_i + 2] = params[
+                2 * idx : 2 * idx + 2
+            ]
+
+        self.sim.forward()
 
     def reset(self):
         """Essentially the same reset as in robosuite MujocoEnv except it 
@@ -299,20 +422,27 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         """
         super().reset()
 
-        # Update the environment with params
-        for idx, movable_obj in enumerate(self.objects_dict.values()):
-            # Only update the objects' xy coordinates
-            # TODO: Set akita_black_bowl_1_x/y relative to ramekin's coordinates
-            start_i, _ = self.sim.data.model.get_joint_qpos_addr(
-                movable_obj.joints[-1]
-            )
-            self.sim.data.qpos[start_i : start_i + 2] = self.params[
-                2 * idx : 2 * idx + 2
-            ]
-
-        # Place the objects and check for validity
-        self.sim.forward()
-        self._check_valid_placement()
+        self._place_objects(self.params)
+        try:
+            self._check_valid_placement()
+        except ValueError as e:
+            if hasattr(self, '_mdl'):
+                print(f'Repairing params {self.params}')
+                self._construct_problem(self._mdl)
+                repaired_params = self._mdl.solve()
+                repaired_params = np.array(list(chain.from_iterable((
+                        repaired_params.get_value(f'{movable_obj.name}_x'), repaired_params.get_value(f'{movable_obj.name}_y')) 
+                        for movable_obj in self.objects_dict.values()
+                    )))
+                if repaired_params is None:
+                    print('No repair solution found')
+                    raise e
+                print(f'New params: {repaired_params}')
+                self._place_objects(repaired_params)
+                self._check_valid_placement()
+                self._params = repaired_params
+            else:
+                raise e
 
         observations = (
             self.viewer._get_observations(force_update=True)
