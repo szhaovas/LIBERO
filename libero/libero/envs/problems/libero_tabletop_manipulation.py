@@ -305,11 +305,9 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         movable objects are the closest to their starting locations while being 
         beyond a distance threshold to each other and all fixtures.
 
-        We cannot formulate this as a simple constrained optimization because 
-        distance >= threshold is a non-convex constraint, which is not supported 
-        by CPLEX. Instead, we regularize the objective (distance to starting 
-        locations) with distances among objects, low-capped at 0 when the 
-        distance is above threshold.
+        To force objects to be at least some distance apart, we add constraints 
+        forcing L1 distance >= horizontal_radius. We use L1 instead of L2 
+        distance here because CPLEX only allows convex constraints.
         """
         costs = []
         for this_obj, other_obj in combinations(
@@ -338,6 +336,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                         lb=-self.table_bounds[1]+this_obj.horizontal_radius,
                         ub=self.table_bounds[1]-this_obj.horizontal_radius
                     )
+                    # minimize distance from starting location
                     costs.append((this_x_var-this_x)**2+(this_y_var-this_y)**2)
             else:
                 this_x_var, this_y_var = this_x, this_y
@@ -356,47 +355,16 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                         lb=-self.table_bounds[1]+other_obj.horizontal_radius,
                         ub=self.table_bounds[1]-other_obj.horizontal_radius
                     )
+                    # minimize distance from starting location
                     costs.append((other_x_var-other_x)**2+(other_y_var-other_y)**2)
             else:
                 other_x_var, other_y_var = other_x, other_y
 
             if this_movable or other_movable:
-                # Regularize the objective with distance between objects, 
-                # low-capped at 0 when the distance is above threshold.
-                #     |x1 - x2| >= threshold
-                #     => cost += max(threshold - |x1 - x2|, 0)
-                
+                # force objects to be some distance apart
                 threshold = this_obj.horizontal_radius + other_obj.horizontal_radius + 1e-6
-
-                # abs(x1 - x2)
-                abs_x_var = mdl.continuous_var(
-                    name=f"{this_obj.name}_{other_obj.name}_ax", lb=0
-                )
-                mdl.add_constraint(abs_x_var >= this_x_var - other_x_var)
-                mdl.add_constraint(abs_x_var >= other_x_var - this_x_var)
-
-                # max(threshold - abs_x_var, 0)
-                hinge_x_var = mdl.continuous_var(
-                    name=f"{this_obj.name}_{other_obj.name}_hx"
-                )
-                mdl.add_constraint(hinge_x_var >= threshold - abs_x_var)
-                
-                costs.append(hinge_x_var)
-
-                # abs(y1 - y2)
-                abs_y_var = mdl.continuous_var(
-                    name=f"{this_obj.name}_{other_obj.name}_ay", lb=0
-                )
-                mdl.add_constraint(abs_y_var >= this_y_var - other_y_var)
-                mdl.add_constraint(abs_y_var >= other_y_var - this_y_var)
-
-                # max(threshold - abs_y_var, 0)
-                hinge_y_var = mdl.continuous_var(
-                    name=f"{this_obj.name}_{other_obj.name}_hy", lb=0
-                )
-                mdl.add_constraint(hinge_y_var >= threshold - abs_y_var)
-                
-                costs.append(hinge_y_var)
+                mdl.add_constraint(mdl.abs(this_x_var - other_x_var) >= threshold)
+                mdl.add_constraint(mdl.abs(this_y_var - other_y_var) >= threshold)
         
         mdl.minimize(sum(costs))
 
