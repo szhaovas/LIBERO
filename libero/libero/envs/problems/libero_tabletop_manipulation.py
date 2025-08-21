@@ -220,6 +220,7 @@ class Libero_Tabletop_Manipulation(BDDLBaseDomain):
 @register_problem
 class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
     table_bounds = [0.3, 0.38]
+    next_to_bound = 0.15
     def __init__(self, bddl_file_name, *args, params, repair_env=False, repair_config=None, **kwargs):
         super().__init__(bddl_file_name, *args, **kwargs)
 
@@ -306,8 +307,9 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         beyond a distance threshold to each other and all fixtures.
 
         To force objects to be at least some distance apart, we add constraints 
-        forcing L1 distance >= horizontal_radius. We use L1 instead of L2 
-        distance here because CPLEX only allows convex constraints.
+        forcing Linf distance >= horizontal_radius. We use Linf instead of L2 
+        distance here because CPLEX only allows convex constraints, and L2 is 
+        lower-bounded by Linf.
         """
         costs = []
         for this_obj, other_obj in combinations(
@@ -362,9 +364,34 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
 
             if this_movable or other_movable:
                 # force objects to be some distance apart
-                threshold = this_obj.horizontal_radius + other_obj.horizontal_radius + 1e-6
-                mdl.add_constraint(mdl.abs(this_x_var - other_x_var) >= threshold)
-                mdl.add_constraint(mdl.abs(this_y_var - other_y_var) >= threshold)
+                threshold = this_obj.horizontal_radius + \
+                    other_obj.horizontal_radius + 1e-6
+                mdl.add_constraint(
+                    mdl.max(
+                        mdl.abs(this_x_var - other_x_var), 
+                        mdl.abs(this_y_var - other_y_var)
+                    ) >= threshold
+                )
+
+        # Make sure plate_1 is close to ramekin, not plate_2
+        plate_1_x_var = mdl.get_var_by_name("akita_black_bowl_1_x")
+        plate_1_y_var = mdl.get_var_by_name("akita_black_bowl_1_y")
+        ramekin_x_var = mdl.get_var_by_name("glazed_rim_porcelain_ramekin_1_x")
+        ramekin_y_var = mdl.get_var_by_name("glazed_rim_porcelain_ramekin_1_y")
+        plate_2_x_var = mdl.get_var_by_name("akita_black_bowl_2_x")
+        plate_2_y_var = mdl.get_var_by_name("akita_black_bowl_2_y")
+        mdl.add_constraint(
+            mdl.max(
+                mdl.abs(plate_1_x_var - ramekin_x_var), 
+                mdl.abs(plate_1_y_var - ramekin_y_var)
+            ) <= self.next_to_bound
+        )
+        mdl.add_constraint(
+            mdl.max(
+                mdl.abs(plate_2_x_var - ramekin_x_var), 
+                mdl.abs(plate_2_y_var - ramekin_y_var)
+            ) >= self.next_to_bound + 1e-6
+        )
         
         mdl.minimize(sum(costs))
 
