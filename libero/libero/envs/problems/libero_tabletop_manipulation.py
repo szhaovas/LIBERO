@@ -9,6 +9,7 @@ from libero.libero.envs.regions import *
 from libero.libero.envs.robots import *
 from libero.libero.envs.utils import rectangle2xyrange
 from robosuite.utils.mjcf_utils import new_site
+import mujoco
 
 
 @register_problem
@@ -249,7 +250,10 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
               cookies_1_x, cookies_1_y,
               glazed_rim_porcelain_ramekin_1_x,
               glazed_rim_porcelain_ramekin_1_y,
-              plate_1_x, plate_1_y
+              plate_1_x, plate_1_y,
+              light_x, light_y, light_z
+              camera_x, camera_y, camera_z,
+              table_r, table_g, table_b
           ]
         where akita_black_bowl_1_x, akita_black_bowl_1_y are relative to the
         ramekin's position (i.e. glazed_rim_porcelain_ramekin_1_x/y), and the
@@ -417,12 +421,27 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         """
         super().reset()
 
-        self._place_objects(self.params)
+        # A bunch of modifications inspired from robosuite/utils/mjmod.py
+        # Set lighting position
+        self.sim.model.light_pos[self.sim.model.light_name2id('light1')] = self.params[10:13]
+
+        # Set camera position
+        self.sim.model.cam_pos[self.sim.model.camera_name2id('agentview')] = self.params[13:16]
+        # TODO: Also allow changing camera rotation
+        # (Maybe borrow the look_at function from simplerenv and change cam_pos and where the camera aims)
+
+        # Set material color hint
+        self.sim.model.mat_rgba[mujoco.mj_name2id(self.sim.model._model, int(mujoco.mjtObj.mjOBJ_MATERIAL), "table_texture")][:-1] = np.clip(self.params[16:19], 0, 1)
+        # TODO: More objects
+        # TODO: Add MILP repair for color (might be overkill...)
+        
+        # Set object arrangement
+        self._place_objects(self.params[:10])
         try:
             self._check_valid_placement()
         except ValueError as e:
             if hasattr(self, '_mdl'):
-                print(f'Repairing params {self.params}')
+                print(f'Repairing params {self.params[:10]}')
                 self._construct_problem(self._mdl)
                 repaired_params = self._mdl.solve()
                 repaired_params = np.array(list(chain.from_iterable((
@@ -435,7 +454,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 print(f'New params: {repaired_params}')
                 self._place_objects(repaired_params)
                 self._check_valid_placement()
-                self._params = repaired_params
+                self._params[:10] = repaired_params
             else:
                 raise e
 
