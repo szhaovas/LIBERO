@@ -11,5 +11,5 @@
  bddl==1.0.1
  future==0.18.2 
  matplotlib==3.5.3 
- cloudpickle==2.1.0
+ cloudpickle
  gym==0.25.2
