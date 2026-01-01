@@ -1,6 +1,6 @@
-(define (problem Task_3)
+(define (problem Task_4)
   (:domain robosuite)
-  (:language Pick the akita black bowl next to the ramekin and place it on the plate)
+  (:language Pick the akita black bowl on the cookies box and place it on the plate)
     (:regions
       (plate_region
           (:target main_table)
@@ -119,8 +119,8 @@
   )
 
   (:init
-    (On akita_black_bowl_1 main_table_next_to_ramekin_region)
-    (On akita_black_bowl_2 main_table_next_to_box_region)
+    (On akita_black_bowl_1 cookies_1)
+    (On akita_black_bowl_2 wooden_cabinet_1_top_side)
     (On plate_1 main_table_plate_region)
     (On cookies_1 main_table_box_region)
     (On glazed_rim_porcelain_ramekin_1 main_table_ramekin_region)

@@ -22,7 +22,16 @@ REGION_SAMPLERS = {
     "libero_kitchen_tabletop_manipulation": {
         "kitchen_table": Libero100TableRegionSampler
     },
-    "libero_spatial_attack": {"table": TableRegionSampler},
+    "task_0": {"table": TableRegionSampler},
+    "task_1": {"table": TableRegionSampler},
+    "task_2": {"table": TableRegionSampler},
+    "task_3": {"table": TableRegionSampler},
+    "task_4": {"table": TableRegionSampler},
+    "task_5": {"table": TableRegionSampler},
+    "task_6": {"table": TableRegionSampler},
+    "task_7": {"table": TableRegionSampler},
+    "task_8": {"table": TableRegionSampler},
+    "task_9": {"table": TableRegionSampler},
 }
 
 
