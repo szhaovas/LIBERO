@@ -1,6 +1,9 @@
 from itertools import chain, combinations
 
+import mujoco
 import numpy as np
+
+np.set_printoptions(precision=2)
 import robosuite.utils.transform_utils as T
 from libero.libero.envs.bddl_base_domain import BDDLBaseDomain, register_problem
 from libero.libero.envs.objects import *
@@ -9,7 +12,6 @@ from libero.libero.envs.regions import *
 from libero.libero.envs.robots import *
 from libero.libero.envs.utils import rectangle2xyrange
 from robosuite.utils.mjcf_utils import new_site
-import mujoco
 
 
 @register_problem
@@ -220,22 +222,21 @@ class Libero_Tabletop_Manipulation(BDDLBaseDomain):
 class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
     table_bounds = [-0.6, -0.61, 0.45, 0.59]
     repair_retry_limit = 5
-    def __init__(self, bddl_file_name, *args, params, repair_env=False, repair_config=None, **kwargs):
+    def __init__(self, bddl_file_name, *args, env_params, repair_config=None, **kwargs):
         super().__init__(bddl_file_name, *args, **kwargs)
 
-        # params have to be processed at the end of reset() or they will get 
+        # env_params have to be processed at the end of reset() or they will get 
         # overwritten 
-        self._params = params
+        self._env_params = env_params.copy()
 
-        if repair_env:
-            assert repair_config is not None
+        if repair_config is not None:
             import docplex.mp.model
             self._repair_config = repair_config
             self._docplex_mp_model = docplex.mp.model
             
     @property
-    def params(self):
-        '''For now params should be an array listing object coordinates in the 
+    def env_params(self):
+        '''For now env_params should be an array listing object coordinates in the 
         following order:
           [
               akita_black_bowl_1_x, akita_black_bowl_1_y,
@@ -249,7 +250,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
               table_r, table_g, table_b
           ]
         '''
-        return self._params
+        return self._env_params
 
     def _reset_milp(self):
         context = self._docplex_mp_model.Context.make_default_context()
@@ -279,7 +280,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
             ]
             if (
                 np.linalg.norm((this_x - other_x, this_y - other_y))
-                <= this_obj.horizontal_radius + other_obj.horizontal_radius
+                < this_obj.horizontal_radius + other_obj.horizontal_radius
             ):
                 if this_z >= other_z:
                     # this_obj is on top
@@ -293,8 +294,8 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 if clearance < min_clearance - 1e-6:
                     raise ValueError(
                         "Overlapping objects:\n"
-                        f"\t {this_obj.name} at {[this_x, this_y, this_z]}\n"
-                        f"\t {other_obj.name} at {[other_x, other_y, other_z]}"
+                        f"\t {this_obj.name} at {np.array([this_x, this_y, this_z])}\n"
+                        f"\t {other_obj.name} at {np.array([other_x, other_y, other_z])}"
                     )
 
         # Check everything is within the table bounds
@@ -303,10 +304,10 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 self.obj_body_id[movable_obj.name]
             ][:2]
             if np.any(
-                obj_xy - movable_obj.horizontal_radius <= 
+                obj_xy - movable_obj.horizontal_radius < 
                 [self.table_bounds[0], self.table_bounds[1]]
             ) or np.any(
-                obj_xy + movable_obj.horizontal_radius >= 
+                obj_xy + movable_obj.horizontal_radius > 
                 [self.table_bounds[2], self.table_bounds[3]]
             ):
                 raise ValueError(
@@ -347,13 +348,13 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 if this_x_var is None:
                     this_x_var = self._mdl.continuous_var(
                         name=f"{this_obj.name}_x",
-                        lb=self.table_bounds[0]+this_obj.horizontal_radius,
-                        ub=self.table_bounds[2]-this_obj.horizontal_radius
+                        lb=self.table_bounds[0]+this_obj.horizontal_radius+1e-6,
+                        ub=self.table_bounds[2]-this_obj.horizontal_radius-1e-6
                     )
                     this_y_var = self._mdl.continuous_var(
                         name=f"{this_obj.name}_y",
-                        lb=self.table_bounds[1]+this_obj.horizontal_radius,
-                        ub=self.table_bounds[3]-this_obj.horizontal_radius
+                        lb=self.table_bounds[1]+this_obj.horizontal_radius+1e-6,
+                        ub=self.table_bounds[3]-this_obj.horizontal_radius-1e-6
                     )
                     # minimize distance from starting location
                     self._mdl_costs.append((this_x_var-this_x)**2+(this_y_var-this_y)**2)
@@ -366,13 +367,13 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 if other_x_var is None:
                     other_x_var = self._mdl.continuous_var(
                         name=f"{other_obj.name}_x",
-                        lb=self.table_bounds[0]+other_obj.horizontal_radius,
-                        ub=self.table_bounds[2]-other_obj.horizontal_radius
+                        lb=self.table_bounds[0]+other_obj.horizontal_radius+1e-6,
+                        ub=self.table_bounds[2]-other_obj.horizontal_radius-1e-6
                     )
                     other_y_var = self._mdl.continuous_var(
                         name=f"{other_obj.name}_y",
-                        lb=self.table_bounds[1]+other_obj.horizontal_radius,
-                        ub=self.table_bounds[3]-other_obj.horizontal_radius
+                        lb=self.table_bounds[1]+other_obj.horizontal_radius+1e-6,
+                        ub=self.table_bounds[3]-other_obj.horizontal_radius-1e-6
                     )
                     # minimize distance from starting location
                     self._mdl_costs.append((other_x_var-other_x)**2+(other_y_var-other_y)**2)
@@ -418,13 +419,13 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         """
         raise NotImplementedError
 
-    def _place_objects(self, params):
+    def _place_objects(self, env_params):
         for idx, movable_obj in enumerate(self.objects_dict.values()):
             # Only update the objects' xy coordinates
             start_i, _ = self.sim.data.model.get_joint_qpos_addr(
                 movable_obj.joints[-1]
             )
-            self.sim.data.qpos[start_i : start_i + 2] = params[
+            self.sim.data.qpos[start_i : start_i + 2] = env_params[
                 2 * idx : 2 * idx + 2
             ]
 
@@ -453,11 +454,12 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         return repaired_params
 
     def try_milp_repair(self):
-        """Attemps to repair :attr:`params` for :attr:`repair_retry_limit` 
-        times. Set :attr:`params` to repaired params if repair was successful. 
+        """Attemps to repair :attr:`env_params` for :attr:`repair_retry_limit` 
+        times. Set :attr:`env_params` to repaired env_params if repair was successful. 
         Otherwise raise ValueError.
         """
-        print(f"Repairing params: {self.params}")
+
+        print(f"Repairing env_params: {self.env_params}")
         
         num_milp_retry = 0
         while num_milp_retry < self.repair_retry_limit:
@@ -480,15 +482,15 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                     num_milp_retry += 1
                     continue
             
-                self._params[:10] = repaired_params
-                print(f"Found new params: {self._params}")
+                self._env_params[:10] = repaired_params
+                print(f"Found new env_params: {self.env_params}")
                 return
         
-        raise ValueError(f"Failed to repair params after {self.repair_retry_limit} attempts...")
+        raise ValueError(f"Failed to repair env_params after {self.repair_retry_limit} attempts...")
 
     def reset(self):
         """Essentially the same reset as in robosuite MujocoEnv except it 
-        modifies the environment according to :attr:`params` at the end.
+        modifies the environment according to :attr:`env_params` at the end.
 
         Returns:
             observations (dict): Same as MujocoEnv reset.
@@ -497,20 +499,20 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
 
         # A bunch of modifications inspired from robosuite/utils/mjmod.py
         # Set lighting position
-        self.sim.model.light_pos[self.sim.model.light_name2id('light1')] = self.params[10:13]
+        self.sim.model.light_pos[self.sim.model.light_name2id('light1')] = self.env_params[10:13]
 
         # Set camera position
-        self.sim.model.cam_pos[self.sim.model.camera_name2id('agentview')] = self.params[13:16]
+        self.sim.model.cam_pos[self.sim.model.camera_name2id('agentview')] = self.env_params[13:16]
         # TODO: Also allow changing camera rotation
         # (Maybe borrow the look_at function from simplerenv and change cam_pos and where the camera aims)
 
         # Set material color hint
-        self.sim.model.mat_rgba[mujoco.mj_name2id(self.sim.model._model, int(mujoco.mjtObj.mjOBJ_MATERIAL), "table_texture")][:-1] = np.clip(self.params[16:19], 0, 1)
+        self.sim.model.mat_rgba[mujoco.mj_name2id(self.sim.model._model, int(mujoco.mjtObj.mjOBJ_MATERIAL), "table_texture")][:-1] = np.clip(self.env_params[16:19], 0, 1)
         # TODO: More objects
         # TODO: Add MILP repair for color (might be overkill...)
         
         # Set object arrangement
-        self._place_objects(self.params[:10])
+        self._place_objects(self.env_params[:10])
 
         try:
             self.check_valid_env()
@@ -533,13 +535,13 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         """Computes object clustering measures.
 
         Returns:
-            Spread: A float between [0, 1]. The mean pairwise distance to the
-                nearest neighbor normalized by the maximum possible pairwise
-                distance within table bounds.
-            Similarity: A float between [0, 1]. The average pairwise distance
-                normalized by the maximum possible pairwise distance within
-                table bounds. This is subtracted from 1 so that a higher value
-                means more similar.
+            spread (float): A float between [0, 1]. The mean pairwise distance 
+                to the nearest neighbor normalized by the maximum possible 
+                pairwise distance within table bounds.
+            similarity (float): A float between [0, 1]. The average pairwise 
+                distance normalized by the maximum possible pairwise distance
+                within table bounds. This is subtracted from 1 so that a higher 
+                value means more similar.
         """
         max_dist = np.linalg.norm([
             self.table_bounds[2] - self.table_bounds[0], # x range
@@ -590,16 +592,16 @@ class Task_0(Libero_Spatial_Attack):
         ]
         if not (xl <= bowl_1_x <= xh and yl <= bowl_1_y <= yh):
             raise ValueError(
-                f"akita_black_bowl_1 at {[bowl_1_x, bowl_1_y]} is not within "
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not within "
                 f"bounds {xl}<=x<={xh}; {yl}<=y<={yh}"
             )
 
         bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
             self.obj_body_id['akita_black_bowl_2']
         ]
-        if xl <= bowl_2_x <= xh or yl <= bowl_2_y <= yh:
+        if xl < bowl_2_x < xh or yl < bowl_2_y < yh:
             raise ValueError(
-                f"akita_black_bowl_2 at {[bowl_2_x, bowl_2_y]} is within "
+                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is within "
                 f"bounds {xl}<=x<={xh}; {yl}<=y<={yh}"
             )
 
@@ -657,17 +659,17 @@ class Task_1(Libero_Spatial_Attack):
         ]
         if max(abs(bowl_1_x-plate_x), abs(bowl_1_y-plate_y)) > threshold:
             raise ValueError(
-                f"akita_black_bowl_1 at {[bowl_1_x, bowl_1_y]} is not close "
-                f"to plate_1 at {[plate_x, plate_y]}"
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
+                f"to plate_1 at {np.array([plate_x, plate_y])}"
             )
         
         bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
             self.obj_body_id['akita_black_bowl_2']
         ]
-        if max(abs(bowl_2_x-plate_x), abs(bowl_2_y-plate_y)) <= threshold:
+        if max(abs(bowl_2_x-plate_x), abs(bowl_2_y-plate_y)) < threshold:
             raise ValueError(
-                f"akita_black_bowl_2 at {[bowl_2_x, bowl_2_y]} is close to "
-                f"plate_1 at {[plate_x, plate_y]}"
+                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
+                f"plate_1 at {np.array([plate_x, plate_y])}"
             )
     
     def _milp_build_task_problem(self):
@@ -687,7 +689,7 @@ class Task_1(Libero_Spatial_Attack):
             self._mdl.max(
                 self._mdl.abs(bowl_1_x_var - plate_x_var), 
                 self._mdl.abs(bowl_1_y_var - plate_y_var)
-            ) <= threshold
+            ) <= threshold - 1e-6
         )
         
         # make sure akita_black_bowl_2 is not close to plate_1
@@ -696,7 +698,7 @@ class Task_1(Libero_Spatial_Attack):
         self._mdl.add_constraint(
             self._mdl.max(
                 self._mdl.abs(bowl_2_x_var - plate_x_var), 
-                self._mdl.abs(bowl_2_y_var - plate_x_var)
+                self._mdl.abs(bowl_2_y_var - plate_y_var)
             ) >= threshold + 1e-6
         )
 
@@ -724,9 +726,9 @@ class Task_2(Libero_Spatial_Attack):
         ]
         if not np.all(np.isclose([ramekin_x, ramekin_y], [bowl_1_x, bowl_1_y])):
             raise ValueError(
-                f"akita_black_bowl_1 at {[bowl_1_x, bowl_1_y, bowl_1_z]} is not "
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y, bowl_1_z])} is not "
                 "on glazed_rim_porcelain_ramekin_1 at "
-                f"{[ramekin_x, ramekin_y, ramekin_z]}"
+                f"{np.array([ramekin_x, ramekin_y, ramekin_z])}"
             )
         
         # akita_black_bowl_2 cannot be on glazed_rim_porcelain_ramekin_1 without 
@@ -776,17 +778,17 @@ class Task_3(Libero_Spatial_Attack):
         ]
         if max(abs(bowl_1_x-ramekin_x), abs(bowl_1_y-ramekin_y)) > threshold:
             raise ValueError(
-                f"akita_black_bowl_1 at {[bowl_1_x, bowl_1_y]} is not close "
-                f"to ramekin_1 at {[ramekin_x, ramekin_y]}"
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
+                f"to ramekin_1 at {np.array([ramekin_x, ramekin_y])}"
             )
         
         bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
             self.obj_body_id['akita_black_bowl_2']
         ]
-        if max(abs(bowl_2_x-ramekin_x), abs(bowl_2_y-ramekin_y)) <= threshold:
+        if max(abs(bowl_2_x-ramekin_x), abs(bowl_2_y-ramekin_y)) < threshold:
             raise ValueError(
-                f"akita_black_bowl_2 at {[bowl_2_x, bowl_2_y]} is close to "
-                f"ramekin_1 at {[ramekin_x, ramekin_y]}"
+                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
+                f"ramekin_1 at {np.array([ramekin_x, ramekin_y])}"
             )
     
     def _milp_build_task_problem(self):
@@ -806,7 +808,7 @@ class Task_3(Libero_Spatial_Attack):
             self._mdl.max(
                 self._mdl.abs(bowl_1_x_var - ramekin_x_var), 
                 self._mdl.abs(bowl_1_y_var - ramekin_y_var)
-            ) <= threshold
+            ) <= threshold - 1e-6
         )
         
         # make sure akita_black_bowl_2 is not close to ramekin_1
@@ -815,7 +817,7 @@ class Task_3(Libero_Spatial_Attack):
         self._mdl.add_constraint(
             self._mdl.max(
                 self._mdl.abs(bowl_2_x_var - ramekin_x_var), 
-                self._mdl.abs(bowl_2_y_var - ramekin_x_var)
+                self._mdl.abs(bowl_2_y_var - ramekin_y_var)
             ) >= threshold + 1e-6
         )
 
@@ -842,8 +844,8 @@ class Task_4(Libero_Spatial_Attack):
         ]
         if not np.all(np.isclose([cookies_x, cookies_y], [bowl_1_x, bowl_1_y])):
             raise ValueError(
-                f"akita_black_bowl_1 at {[bowl_1_x, bowl_1_y, bowl_1_z]} is not "
-                f"on cookies_1 at {[cookies_x, cookies_y, cookies_z]}"
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y, bowl_1_z])} is not "
+                f"on cookies_1 at {np.array([cookies_x, cookies_y, cookies_z])}"
             )
         
         # akita_black_bowl_2 cannot be on cookies_1 without overlapping with 
@@ -884,8 +886,8 @@ class Task_5(Libero_Spatial_Attack):
         ]
         if not np.all(np.isclose([stove_x, stove_y], [bowl_1_x, bowl_1_y])):
             raise ValueError(
-                f"akita_black_bowl_1 at {[bowl_1_x, bowl_1_y, bowl_1_z]} is not "
-                f"on the stove at {[stove_x, stove_y, stove_z]}"
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y, bowl_1_z])} is not "
+                f"on the stove at {np.array([stove_x, stove_y, stove_z])}"
             )
         
         # akita_black_bowl_2 cannot be in flat_stove_1_cook_region without 
@@ -936,17 +938,17 @@ class Task_6(Libero_Spatial_Attack):
         ]
         if max(abs(bowl_1_x-cookies_x), abs(bowl_1_y-cookies_y)) > threshold:
             raise ValueError(
-                f"akita_black_bowl_1 at {[bowl_1_x, bowl_1_y]} is not close "
-                f"to cookies_1 at {[cookies_x, cookies_y]}"
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
+                f"to cookies_1 at {np.array([cookies_x, cookies_y])}"
             )
         
         bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
             self.obj_body_id['akita_black_bowl_2']
         ]
-        if max(abs(bowl_2_x-cookies_x), abs(bowl_2_y-cookies_y)) <= threshold:
+        if max(abs(bowl_2_x-cookies_x), abs(bowl_2_y-cookies_y)) < threshold:
             raise ValueError(
-                f"akita_black_bowl_2 at {[bowl_2_x, bowl_2_y]} is close to "
-                f"cookies_1 at {[cookies_x, cookies_y]}"
+                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
+                f"cookies_1 at {np.array([cookies_x, cookies_y])}"
             )
     
     def _milp_build_task_problem(self):
@@ -966,7 +968,7 @@ class Task_6(Libero_Spatial_Attack):
             self._mdl.max(
                 self._mdl.abs(bowl_1_x_var - cookies_x_var), 
                 self._mdl.abs(bowl_1_y_var - cookies_y_var)
-            ) <= threshold
+            ) <= threshold - 1e-6
         )
         
         # make sure akita_black_bowl_2 is not close to cookies_1
@@ -975,7 +977,7 @@ class Task_6(Libero_Spatial_Attack):
         self._mdl.add_constraint(
             self._mdl.max(
                 self._mdl.abs(bowl_2_x_var - cookies_x_var), 
-                self._mdl.abs(bowl_2_y_var - cookies_x_var)
+                self._mdl.abs(bowl_2_y_var - cookies_y_var)
             ) >= threshold + 1e-6
         )
 
@@ -988,7 +990,7 @@ class Task_7(Libero_Spatial_Attack):
     To satisfy this requirement, we check that only akita_black_bowl_1 is close 
     to the center point between plate_1 and glazed_rim_porcelain_ramekin_1.
     """
-    tolerance = 0.3 # should be between 0 and 0.5
+    tolerance = 0.4 # should be between 0 and 0.5
     
     def check_valid_env(self):
         self._check_valid_env_basic()
@@ -1018,23 +1020,23 @@ class Task_7(Libero_Spatial_Attack):
             abs(bowl_1_y - midpoint_y) <= self.tolerance*abs(ramekin_y - plate_y) 
         ):
             raise ValueError(
-                f"akita_black_bowl_1 at {[bowl_1_x, bowl_1_y]} is not between "
-                f"plate_1 at {[plate_x, plate_y]} and "
-                f"glazed_rim_porcelain_ramekin_1 at {[ramekin_x, ramekin_y]}"
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not between "
+                f"plate_1 at {np.array([plate_x, plate_y])} and "
+                f"glazed_rim_porcelain_ramekin_1 at {np.array([ramekin_x, ramekin_y])}"
             )
 
         bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
             self.obj_body_id['akita_black_bowl_2']
         ]
         if (
-            abs(bowl_2_x - midpoint_x) <= self.tolerance*abs(ramekin_x - plate_x)
+            abs(bowl_2_x - midpoint_x) < self.tolerance*abs(ramekin_x - plate_x)
             or 
-            abs(bowl_2_y - midpoint_y) <= self.tolerance*abs(ramekin_y - plate_y)
+            abs(bowl_2_y - midpoint_y) < self.tolerance*abs(ramekin_y - plate_y)
         ):
             raise ValueError(
-                f"akita_black_bowl_2 at {[bowl_2_x, bowl_2_y]} is between "
-                f"plate_1 at {[plate_x, plate_y]} and "
-                f"glazed_rim_porcelain_ramekin_1 at {[ramekin_x, ramekin_y]}"
+                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is between "
+                f"plate_1 at {np.array([plate_x, plate_y])} and "
+                f"glazed_rim_porcelain_ramekin_1 at {np.array([ramekin_x, ramekin_y])}"
             )
 
     def _milp_build_task_problem(self):
@@ -1048,14 +1050,13 @@ class Task_7(Libero_Spatial_Attack):
         threshold = (
             self.objects_dict["plate_1"].horizontal_radius + 
             self.objects_dict["glazed_rim_porcelain_ramekin_1"].horizontal_radius + 
-            2*self.objects_dict["akita_black_bowl_1"].horizontal_radius + 
-            1e-6
+            2*self.objects_dict["akita_black_bowl_1"].horizontal_radius
         )
         self._mdl.add_constraint(
             self._mdl.max(
                 self._mdl.abs(plate_x_var - ramekin_x_var), 
                 self._mdl.abs(plate_y_var - ramekin_y_var)
-            ) >= threshold
+            ) >= threshold + 1e-6
         )
 
         # Make sure only akita_black_bowl_1_x is between plate_1 and 
@@ -1125,7 +1126,7 @@ class Task_8(Libero_Spatial_Attack):
             ]
             if (
                 np.linalg.norm((this_x - other_x, this_y - other_y))
-                <= this_obj.horizontal_radius + other_obj.horizontal_radius
+                < this_obj.horizontal_radius + other_obj.horizontal_radius
             ):
                 if this_z >= other_z:
                     # this_obj is on top
@@ -1139,8 +1140,8 @@ class Task_8(Libero_Spatial_Attack):
                 if clearance < min_clearance - 1e-6:
                     raise ValueError(
                         "Overlapping objects:\n"
-                        f"\t {this_obj.name} at {[this_x, this_y, this_z]}\n"
-                        f"\t {other_obj.name} at {[other_x, other_y, other_z]}"
+                        f"\t {this_obj.name} at {np.array([this_x, this_y, this_z])}\n"
+                        f"\t {other_obj.name} at {np.array([other_x, other_y, other_z])}"
                     )
 
     def _milp_build_basic_problem(self):
@@ -1149,11 +1150,11 @@ class Task_8(Libero_Spatial_Attack):
         for this_obj, other_obj in combinations(
             chain(self.objects_dict.values(), self.fixtures_dict.values()), 2
         ):
-            this_x, this_y, _ = self.sim.data.body_xpos[
+            this_x, this_y, this_z = self.sim.data.body_xpos[
                 self.obj_body_id[this_obj.name]
             ]
             this_movable = this_obj.name in self.objects_dict
-            other_x, other_y, _ = self.sim.data.body_xpos[
+            other_x, other_y, other_z = self.sim.data.body_xpos[
                 self.obj_body_id[other_obj.name]
             ]
             other_movable = other_obj.name in self.objects_dict
@@ -1164,13 +1165,13 @@ class Task_8(Libero_Spatial_Attack):
                 if this_x_var is None:
                     this_x_var = self._mdl.continuous_var(
                         name=f"{this_obj.name}_x",
-                        lb=self.table_bounds[0]+this_obj.horizontal_radius,
-                        ub=self.table_bounds[2]-this_obj.horizontal_radius
+                        lb=self.table_bounds[0]+this_obj.horizontal_radius+1e-6,
+                        ub=self.table_bounds[2]-this_obj.horizontal_radius-1e-6
                     )
                     this_y_var = self._mdl.continuous_var(
                         name=f"{this_obj.name}_y",
-                        lb=self.table_bounds[1]+this_obj.horizontal_radius,
-                        ub=self.table_bounds[3]-this_obj.horizontal_radius
+                        lb=self.table_bounds[1]+this_obj.horizontal_radius+1e-6,
+                        ub=self.table_bounds[3]-this_obj.horizontal_radius-1e-6
                     )
                     # minimize distance from starting location
                     self._mdl_costs.append((this_x_var-this_x)**2+(this_y_var-this_y)**2)
@@ -1183,13 +1184,13 @@ class Task_8(Libero_Spatial_Attack):
                 if other_x_var is None:
                     other_x_var = self._mdl.continuous_var(
                         name=f"{other_obj.name}_x",
-                        lb=self.table_bounds[0]+other_obj.horizontal_radius,
-                        ub=self.table_bounds[2]-other_obj.horizontal_radius
+                        lb=self.table_bounds[0]+other_obj.horizontal_radius+1e-6,
+                        ub=self.table_bounds[2]-other_obj.horizontal_radius-1e-6
                     )
                     other_y_var = self._mdl.continuous_var(
                         name=f"{other_obj.name}_y",
-                        lb=self.table_bounds[1]+other_obj.horizontal_radius,
-                        ub=self.table_bounds[3]-other_obj.horizontal_radius
+                        lb=self.table_bounds[1]+other_obj.horizontal_radius+1e-6,
+                        ub=self.table_bounds[3]-other_obj.horizontal_radius-1e-6
                     )
                     # minimize distance from starting location
                     self._mdl_costs.append((other_x_var-other_x)**2+(other_y_var-other_y)**2)
@@ -1240,8 +1241,8 @@ class Task_8(Libero_Spatial_Attack):
         ]
         if not np.all(np.isclose([top_layer_x, top_layer_y], [bowl_1_x, bowl_1_y])):
             raise ValueError(
-                f"akita_black_bowl_1 at {[bowl_1_x, bowl_1_y, bowl_1_z]} is not "
-                f"in the cabinet at {[top_layer_x, top_layer_y, top_layer_z]}"
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y, bowl_1_z])} is not "
+                f"in the cabinet at {np.array([top_layer_x, top_layer_y, top_layer_z])}"
             )
         
         # akita_black_bowl_2 cannot be in wooden_cabinet_1_top_region without 
@@ -1283,8 +1284,8 @@ class Task_9(Libero_Spatial_Attack):
         ]
         if not np.all(np.isclose([cabinet_x, cabinet_y], [bowl_1_x, bowl_1_y])):
             raise ValueError(
-                f"akita_black_bowl_1 at {[bowl_1_x, bowl_1_y]} is not "
-                f"on the cabinet at {[cabinet_x, cabinet_y]}"
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not "
+                f"on the cabinet at {np.array([cabinet_x, cabinet_y])}"
             )
         
         # akita_black_bowl_2 cannot be on the cabinet without overlapping with 
