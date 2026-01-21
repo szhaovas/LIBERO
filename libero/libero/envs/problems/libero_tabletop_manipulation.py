@@ -742,6 +742,7 @@ class Task_1(Libero_Spatial_Attack):
     """
 
     next_to_bound = 0.1
+    far_from_bound = 0.15
 
     def check_valid_env(self):
         self._check_valid_env_basic()
@@ -757,16 +758,15 @@ class Task_1(Libero_Spatial_Attack):
             self.obj_body_id["plate_1"]
         ]
 
-        threshold = (
+        padding = (
             self.objects_dict["plate_1"].horizontal_radius
             + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-            + self.next_to_bound
         )
 
         bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
             self.obj_body_id["akita_black_bowl_1"]
         ]
-        if max(abs(bowl_1_x - plate_x), abs(bowl_1_y - plate_y)) > threshold:
+        if max(abs(bowl_1_x - plate_x), abs(bowl_1_y - plate_y)) > padding + self.next_to_bound:
             raise ValueError(
                 f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
                 f"to plate_1 at {np.array([plate_x, plate_y])}"
@@ -775,7 +775,7 @@ class Task_1(Libero_Spatial_Attack):
         bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
             self.obj_body_id["akita_black_bowl_2"]
         ]
-        if max(abs(bowl_2_x - plate_x), abs(bowl_2_y - plate_y)) < threshold:
+        if max(abs(bowl_2_x - plate_x), abs(bowl_2_y - plate_y)) < padding + self.far_from_bound:
             raise ValueError(
                 f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
                 f"plate_1 at {np.array([plate_x, plate_y])}"
@@ -785,10 +785,9 @@ class Task_1(Libero_Spatial_Attack):
         plate_x_var = self._mdl.get_var_by_name("plate_1_x")
         plate_y_var = self._mdl.get_var_by_name("plate_1_y")
 
-        threshold = (
+        padding = (
             self.objects_dict["plate_1"].horizontal_radius
             + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-            + self.next_to_bound
         )
 
         # make sure akita_black_bowl_1 is close to plate_1
@@ -799,7 +798,7 @@ class Task_1(Libero_Spatial_Attack):
                 self._mdl.abs(bowl_1_x_var - plate_x_var),
                 self._mdl.abs(bowl_1_y_var - plate_y_var),
             )
-            <= threshold - 1e-6
+            <= padding + self.next_to_bound - 1e-6
         )
 
         # make sure akita_black_bowl_2 is not close to plate_1
@@ -810,7 +809,7 @@ class Task_1(Libero_Spatial_Attack):
                 self._mdl.abs(bowl_2_x_var - plate_x_var),
                 self._mdl.abs(bowl_2_y_var - plate_y_var),
             )
-            >= threshold + 1e-6
+            >= padding + self.far_from_bound + 1e-6
         )
 
 
@@ -869,6 +868,7 @@ class Task_3(Libero_Spatial_Attack):
     """
 
     next_to_bound = 0.1
+    far_from_bound = 0.15
 
     def check_valid_env(self):
         self._check_valid_env_basic()
@@ -884,12 +884,11 @@ class Task_3(Libero_Spatial_Attack):
             self.obj_body_id["glazed_rim_porcelain_ramekin_1"]
         ]
 
-        threshold = (
+        padding = (
             self.objects_dict[
                 "glazed_rim_porcelain_ramekin_1"
             ].horizontal_radius
             + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-            + self.next_to_bound
         )
 
         bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
@@ -897,7 +896,7 @@ class Task_3(Libero_Spatial_Attack):
         ]
         if (
             max(abs(bowl_1_x - ramekin_x), abs(bowl_1_y - ramekin_y))
-            > threshold
+            > padding + self.next_to_bound
         ):
             raise ValueError(
                 f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
@@ -909,7 +908,7 @@ class Task_3(Libero_Spatial_Attack):
         ]
         if (
             max(abs(bowl_2_x - ramekin_x), abs(bowl_2_y - ramekin_y))
-            < threshold
+            < padding + self.far_from_bound
         ):
             raise ValueError(
                 f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
@@ -924,12 +923,11 @@ class Task_3(Libero_Spatial_Attack):
             "glazed_rim_porcelain_ramekin_1_y"
         )
 
-        threshold = (
+        padding = (
             self.objects_dict[
                 "glazed_rim_porcelain_ramekin_1"
             ].horizontal_radius
             + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-            + self.next_to_bound
         )
 
         # make sure akita_black_bowl_1 is close to ramekin_1
@@ -940,7 +938,7 @@ class Task_3(Libero_Spatial_Attack):
                 self._mdl.abs(bowl_1_x_var - ramekin_x_var),
                 self._mdl.abs(bowl_1_y_var - ramekin_y_var),
             )
-            <= threshold - 1e-6
+            <= padding + self.next_to_bound - 1e-6
         )
 
         # make sure akita_black_bowl_2 is not close to ramekin_1
@@ -951,7 +949,7 @@ class Task_3(Libero_Spatial_Attack):
                 self._mdl.abs(bowl_2_x_var - ramekin_x_var),
                 self._mdl.abs(bowl_2_y_var - ramekin_y_var),
             )
-            >= threshold + 1e-6
+            >= padding + self.far_from_bound + 1e-6
         )
 
 
@@ -1047,6 +1045,7 @@ class Task_6(Libero_Spatial_Attack):
     """
 
     next_to_bound = 0.1
+    far_from_bound = 0.15
 
     def check_valid_env(self):
         self._check_valid_env_basic()
@@ -1062,10 +1061,9 @@ class Task_6(Libero_Spatial_Attack):
             self.obj_body_id["cookies_1"]
         ]
 
-        threshold = (
+        padding = (
             self.objects_dict["cookies_1"].horizontal_radius
             + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-            + self.next_to_bound
         )
 
         bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
@@ -1073,7 +1071,7 @@ class Task_6(Libero_Spatial_Attack):
         ]
         if (
             max(abs(bowl_1_x - cookies_x), abs(bowl_1_y - cookies_y))
-            > threshold
+            > padding + self.next_to_bound
         ):
             raise ValueError(
                 f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
@@ -1085,7 +1083,7 @@ class Task_6(Libero_Spatial_Attack):
         ]
         if (
             max(abs(bowl_2_x - cookies_x), abs(bowl_2_y - cookies_y))
-            < threshold
+            < padding + self.far_from_bound
         ):
             raise ValueError(
                 f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
@@ -1096,10 +1094,9 @@ class Task_6(Libero_Spatial_Attack):
         cookies_x_var = self._mdl.get_var_by_name("cookies_1_x")
         cookies_y_var = self._mdl.get_var_by_name("cookies_1_y")
 
-        threshold = (
+        padding = (
             self.objects_dict["cookies_1"].horizontal_radius
             + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-            + self.next_to_bound
         )
 
         # make sure akita_black_bowl_1 is close to cookies_1
@@ -1110,7 +1107,7 @@ class Task_6(Libero_Spatial_Attack):
                 self._mdl.abs(bowl_1_x_var - cookies_x_var),
                 self._mdl.abs(bowl_1_y_var - cookies_y_var),
             )
-            <= threshold - 1e-6
+            <= padding + self.next_to_bound - 1e-6
         )
 
         # make sure akita_black_bowl_2 is not close to cookies_1
@@ -1121,7 +1118,7 @@ class Task_6(Libero_Spatial_Attack):
                 self._mdl.abs(bowl_2_x_var - cookies_x_var),
                 self._mdl.abs(bowl_2_y_var - cookies_y_var),
             )
-            >= threshold + 1e-6
+            >= padding + self.far_from_bound + 1e-6
         )
 
 
@@ -1134,7 +1131,8 @@ class Task_7(Libero_Spatial_Attack):
     to the center point between plate_1 and glazed_rim_porcelain_ramekin_1.
     """
 
-    tolerance = 0.4  # should be between 0 and 0.5
+    between_tolerance = 0.4  # should be between 0 and 0.5
+    not_between_tolerance = 0.5
 
     def check_valid_env(self):
         self._check_valid_env_basic()
@@ -1160,9 +1158,9 @@ class Task_7(Libero_Spatial_Attack):
         ]
         if not (
             abs(bowl_1_x - midpoint_x)
-            <= self.tolerance * abs(ramekin_x - plate_x)
+            <= self.between_tolerance * abs(ramekin_x - plate_x)
             and abs(bowl_1_y - midpoint_y)
-            <= self.tolerance * abs(ramekin_y - plate_y)
+            <= self.between_tolerance * abs(ramekin_y - plate_y)
         ):
             raise ValueError(
                 f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not between "
@@ -1173,9 +1171,9 @@ class Task_7(Libero_Spatial_Attack):
         bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
             self.obj_body_id["akita_black_bowl_2"]
         ]
-        if abs(bowl_2_x - midpoint_x) < self.tolerance * abs(
+        if abs(bowl_2_x - midpoint_x) < self.not_between_tolerance * abs(
             ramekin_x - plate_x
-        ) or abs(bowl_2_y - midpoint_y) < self.tolerance * abs(
+        ) or abs(bowl_2_y - midpoint_y) < self.not_between_tolerance * abs(
             ramekin_y - plate_y
         ):
             raise ValueError(
@@ -1218,25 +1216,25 @@ class Task_7(Libero_Spatial_Attack):
         bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
         self._mdl.add_constraint(
             self._mdl.abs(bowl_1_x_var - midpoint_x_var)
-            <= self.tolerance * self._mdl.abs(ramekin_x_var - plate_x_var)
+            <= self.between_tolerance * self._mdl.abs(ramekin_x_var - plate_x_var)
             - 1e-6
         )
         bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
         self._mdl.add_constraint(
             self._mdl.abs(bowl_1_y_var - midpoint_y_var)
-            <= self.tolerance * self._mdl.abs(ramekin_y_var - plate_y_var)
+            <= self.between_tolerance * self._mdl.abs(ramekin_y_var - plate_y_var)
             - 1e-6
         )
         bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
         self._mdl.add_constraint(
             self._mdl.abs(bowl_2_x_var - midpoint_x_var)
-            >= self.tolerance * self._mdl.abs(ramekin_x_var - plate_x_var)
+            >= self.not_between_tolerance * self._mdl.abs(ramekin_x_var - plate_x_var)
             + 1e-6
         )
         bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
         self._mdl.add_constraint(
             self._mdl.abs(bowl_2_y_var - midpoint_y_var)
-            >= self.tolerance * self._mdl.abs(ramekin_y_var - plate_y_var)
+            >= self.not_between_tolerance * self._mdl.abs(ramekin_y_var - plate_y_var)
             + 1e-6
         )
 
