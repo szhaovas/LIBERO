@@ -727,11 +727,13 @@ class Task_0(Libero_Spatial_Attack):
         self._mdl.add_constraint(bowl_1_y_var >= yl + 1e-6)
         self._mdl.add_constraint(bowl_1_y_var <= yh - 1e-6)
 
-        # make sure akita_black_bowl_2 is not within bounds
+        # make sure akita_black_bowl_2_x is not within x bounds, i.e. either
+        # below lb or above ub
         bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
         bowl_2_x_smt_lb = self._mdl.binary_var(name="bowl_2_x_smt_lb")
         self._mdl.add_indicator(bowl_2_x_smt_lb, bowl_2_x_var <= xl - 1e-6, 1)
         self._mdl.add_indicator(bowl_2_x_smt_lb, bowl_2_x_var >= xh + 1e-6, 0)
+        # make sure akita_black_bowl_2_y is not within y bounds
         bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
         bowl_2_y_smt_lb = self._mdl.binary_var(name="bowl_2_y_smt_lb")
         self._mdl.add_indicator(bowl_2_y_smt_lb, bowl_2_y_var <= yl - 1e-6, 1)
@@ -1140,7 +1142,7 @@ class Task_7(Libero_Spatial_Attack):
     to the center point between plate_1 and glazed_rim_porcelain_ramekin_1.
     """
 
-    between_tolerance = 0.4  # should be between 0 and 0.5
+    between_tolerance = 0.3  # should be between 0 and 0.5
     not_between_tolerance = 0.5
 
     def check_valid_env(self):
@@ -1182,7 +1184,7 @@ class Task_7(Libero_Spatial_Attack):
         ]
         if abs(bowl_2_x - midpoint_x) < self.not_between_tolerance * abs(
             ramekin_x - plate_x
-        ) or abs(bowl_2_y - midpoint_y) < self.not_between_tolerance * abs(
+        ) and abs(bowl_2_y - midpoint_y) < self.not_between_tolerance * abs(
             ramekin_y - plate_y
         ):
             raise ValueError(
@@ -1218,8 +1220,9 @@ class Task_7(Libero_Spatial_Attack):
             >= threshold + 1e-6
         )
 
-        # Make sure only akita_black_bowl_1_x is between plate_1 and
-        # akita_black_bowl_1
+        # Make sure akita_black_bowl_1 is between plate_1 and
+        # glazed_rim_porcelain_ramekin_1, i.e. both its xy are close to the
+        # midpoint between them
         midpoint_x_var = (plate_x_var + ramekin_x_var) / 2
         midpoint_y_var = (plate_y_var + ramekin_y_var) / 2
         bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
@@ -1236,20 +1239,29 @@ class Task_7(Libero_Spatial_Attack):
             * self._mdl.abs(ramekin_y_var - plate_y_var)
             - 1e-6
         )
+
+        # Make sure akita_black_bowl_2 is not between plate_1 and
+        # glazed_rim_porcelain_ramekin_1, i.e. at least one of its xy isn't
+        # close to the midpoint between them
         bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
-        self._mdl.add_constraint(
+        bowl_2_x_awyf_mid = self._mdl.binary_var(name="bowl_2_x_awyf_mid")
+        self._mdl.add_indicator(
+            bowl_2_x_awyf_mid,
             self._mdl.abs(bowl_2_x_var - midpoint_x_var)
             >= self.not_between_tolerance
             * self._mdl.abs(ramekin_x_var - plate_x_var)
-            + 1e-6
+            + 1e-6,
         )
         bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
-        self._mdl.add_constraint(
+        bowl_2_y_awyf_mid = self._mdl.binary_var(name="bowl_2_y_awyf_mid")
+        self._mdl.add_indicator(
+            bowl_2_y_awyf_mid,
             self._mdl.abs(bowl_2_y_var - midpoint_y_var)
             >= self.not_between_tolerance
             * self._mdl.abs(ramekin_y_var - plate_y_var)
-            + 1e-6
+            + 1e-6,
         )
+        self._mdl.add_constraint(bowl_2_x_awyf_mid + bowl_2_y_awyf_mid >= 1)
 
 
 @register_problem
