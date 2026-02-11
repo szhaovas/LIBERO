@@ -263,10 +263,10 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         # overwritten
         self._env_params = env_params.copy()
 
-        if repair_config is not None:
+        self._repair_config = repair_config
+        if self._repair_config is not None:
             import docplex.mp.model
 
-            self._repair_config = repair_config
             self._docplex_mp_model = docplex.mp.model
 
     @property
@@ -616,8 +616,8 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         try:
             self.check_valid_env()
         except Exception as e:
-            print(e)
             if self._repair_config is not None:
+                print(e)
                 try:
                     self.try_milp_repair()
                 except:
