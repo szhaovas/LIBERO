@@ -1,13 +1,10 @@
 import abc
 import os
-import glob
 import torch
 
 from typing import NamedTuple
 from libero.libero import get_libero_path
 from libero.libero.benchmark.libero_suite_task_map import libero_task_map
-
-import re
 
 BENCHMARK_MAPPING = {}
 
@@ -67,45 +64,19 @@ max_len = 0
 for libero_suite in libero_suites:
     task_maps[libero_suite] = {}
 
-    if libero_suite == "custom":
-        language_pattern = re.compile(r"\(:language\s+(.*?)\)", re.DOTALL)
-        for bddl_filename in glob.glob(
-            f"{get_libero_path('bddl_files')}/custom/*.bddl"
-        ):
-            with open(bddl_filename, "r", encoding="utf-8") as f:
-                content = f.read()
+    for task in libero_task_map[libero_suite]:
+        language = grab_language_from_filename(task + ".bddl")
+        task_maps[libero_suite][task] = Task(
+            name=task,
+            language=language,
+            problem="Libero",
+            problem_folder=libero_suite,
+            bddl_file=f"{task}.bddl",
+            init_states_file=None if libero_suite == "custom" else f"{task}.pruned_init",
+        )
 
-            language = language_pattern.findall(content)
-            assert (
-                len(language) == 1,
-                f"Found {len(language)} :language predicates in {bddl_filename}"
-                f" but expected exactly one.",
-            )
-            language = language[0]
-
-            task_maps[libero_suite][bddl_filename] = Task(
-                name=bddl_filename,
-                language=language,
-                problem="Libero",
-                problem_folder="custom",
-                bddl_file=bddl_filename,
-                init_states_file=None,
-            )
-
-    else:
-        for task in libero_task_map[libero_suite]:
-            language = grab_language_from_filename(task + ".bddl")
-            task_maps[libero_suite][task] = Task(
-                name=task,
-                language=language,
-                problem="Libero",
-                problem_folder=libero_suite,
-                bddl_file=f"{task}.bddl",
-                init_states_file=f"{task}.pruned_init",
-            )
-
-            # print(language, "\n", f"{task}.bddl", "\n")
-            # print("")
+        # print(language, "\n", f"{task}.bddl", "\n")
+        # print("")
 
 
 task_orders = [

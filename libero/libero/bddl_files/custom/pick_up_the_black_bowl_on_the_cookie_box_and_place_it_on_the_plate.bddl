@@ -1,4 +1,4 @@
-(define (problem Task_4)
+(define (problem Task_3)
   (:domain robosuite)
   (:language Pick the akita black bowl on the cookies box and place it on the plate)
     (:regions

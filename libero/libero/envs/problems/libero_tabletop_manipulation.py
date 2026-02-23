@@ -678,463 +678,6 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
 
 @register_problem
 class Task_0(Libero_Spatial_Attack):
-    """This task requires that akita_black_bowl_1 is within bounds
-    ``main_table_table_center`` and akita_black_bowl_2 is not.
-    """
-
-    def check_valid_env(self):
-        self._check_valid_env_basic()
-        self._check_valid_env_task()
-
-    def milp_build_problem(self):
-        assert hasattr(self, "_mdl")
-        self._milp_build_basic_problem()
-        self._milp_build_task_problem()
-
-    def _check_valid_env_task(self):
-        xl, yl, xh, yh = self.parsed_problem["regions"][
-            "main_table_table_center"
-        ]["ranges"][0]
-
-        bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_1"]
-        ]
-        if not (xl <= bowl_1_x <= xh and yl <= bowl_1_y <= yh):
-            raise ValueError(
-                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not within "
-                f"bounds {xl}<=x<={xh}; {yl}<=y<={yh}"
-            )
-
-        bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_2"]
-        ]
-        if xl < bowl_2_x < xh or yl < bowl_2_y < yh:
-            raise ValueError(
-                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is within "
-                f"bounds {xl}<=x<={xh}; {yl}<=y<={yh}"
-            )
-
-    def _milp_build_task_problem(self):
-        xl, yl, xh, yh = self.parsed_problem["regions"][
-            "main_table_table_center"
-        ]["ranges"][0]
-
-        # make sure akita_black_bowl_1 is within bounds
-        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
-        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
-        self._mdl.add_constraint(bowl_1_x_var >= xl + 1e-6)
-        self._mdl.add_constraint(bowl_1_x_var <= xh - 1e-6)
-        self._mdl.add_constraint(bowl_1_y_var >= yl + 1e-6)
-        self._mdl.add_constraint(bowl_1_y_var <= yh - 1e-6)
-
-        # make sure akita_black_bowl_2_x is not within x bounds, i.e. either
-        # below lb or above ub
-        bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
-        bowl_2_x_smt_lb = self._mdl.binary_var(name="bowl_2_x_smt_lb")
-        self._mdl.add_indicator(bowl_2_x_smt_lb, bowl_2_x_var <= xl - 1e-6, 1)
-        self._mdl.add_indicator(bowl_2_x_smt_lb, bowl_2_x_var >= xh + 1e-6, 0)
-        # make sure akita_black_bowl_2_y is not within y bounds
-        bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
-        bowl_2_y_smt_lb = self._mdl.binary_var(name="bowl_2_y_smt_lb")
-        self._mdl.add_indicator(bowl_2_y_smt_lb, bowl_2_y_var <= yl - 1e-6, 1)
-        self._mdl.add_indicator(bowl_2_y_smt_lb, bowl_2_y_var >= yh + 1e-6, 0)
-
-
-@register_problem
-class Task_1(Libero_Spatial_Attack):
-    """This task requires that akita_black_bowl_1 is close to plate_1 and
-    akita_black_bowl_2 is not
-    """
-
-    next_to_bound = 0.1
-    far_from_bound = 0.2
-
-    def check_valid_env(self):
-        self._check_valid_env_basic()
-        self._check_valid_env_task()
-
-    def milp_build_problem(self):
-        assert hasattr(self, "_mdl")
-        self._milp_build_basic_problem()
-        self._milp_build_task_problem()
-
-    def _check_valid_env_task(self):
-        plate_x, plate_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["plate_1"]
-        ]
-
-        padding = (
-            self.objects_dict["plate_1"].horizontal_radius
-            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-        )
-
-        bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_1"]
-        ]
-        if (
-            max(abs(bowl_1_x - plate_x), abs(bowl_1_y - plate_y))
-            > padding + self.next_to_bound
-        ):
-            raise ValueError(
-                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
-                f"to plate_1 at {np.array([plate_x, plate_y])}"
-            )
-
-        bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_2"]
-        ]
-        if (
-            max(abs(bowl_2_x - plate_x), abs(bowl_2_y - plate_y))
-            < padding + self.far_from_bound
-        ):
-            raise ValueError(
-                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
-                f"plate_1 at {np.array([plate_x, plate_y])}"
-            )
-
-    def _milp_build_task_problem(self):
-        plate_x_var = self._mdl.get_var_by_name("plate_1_x")
-        plate_y_var = self._mdl.get_var_by_name("plate_1_y")
-
-        padding = (
-            self.objects_dict["plate_1"].horizontal_radius
-            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-        )
-
-        # make sure akita_black_bowl_1 is close to plate_1
-        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
-        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
-        self._mdl.add_constraint(
-            self._mdl.max(
-                self._mdl.abs(bowl_1_x_var - plate_x_var),
-                self._mdl.abs(bowl_1_y_var - plate_y_var),
-            )
-            <= padding + self.next_to_bound - 1e-6
-        )
-
-        # make sure akita_black_bowl_2 is not close to plate_1
-        bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
-        bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
-        self._mdl.add_constraint(
-            self._mdl.max(
-                self._mdl.abs(bowl_2_x_var - plate_x_var),
-                self._mdl.abs(bowl_2_y_var - plate_y_var),
-            )
-            >= padding + self.far_from_bound + 1e-6
-        )
-
-
-@register_problem
-class Task_2(Libero_Spatial_Attack):
-    """This task requires that akita_black_bowl_1 is on
-    glazed_rim_porcelain_ramekin_1.
-    """
-
-    def check_valid_env(self):
-        self._check_valid_env_basic()
-        self._check_valid_env_task()
-
-    def milp_build_problem(self):
-        assert hasattr(self, "_mdl")
-        self._milp_build_basic_problem()
-        self._milp_build_task_problem()
-
-    def _check_valid_env_task(self):
-        ramekin_x, ramekin_y, ramekin_z = self.sim.data.body_xpos[
-            self.obj_body_id["glazed_rim_porcelain_ramekin_1"]
-        ]
-        bowl_1_x, bowl_1_y, bowl_1_z = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_1"]
-        ]
-        if not np.all(np.isclose([ramekin_x, ramekin_y], [bowl_1_x, bowl_1_y])):
-            raise ValueError(
-                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y, bowl_1_z])} is not "
-                "on glazed_rim_porcelain_ramekin_1 at "
-                f"{np.array([ramekin_x, ramekin_y, ramekin_z])}"
-            )
-
-        # akita_black_bowl_2 cannot be on glazed_rim_porcelain_ramekin_1 without
-        # overlapping with akita_black_bowl_1, so no need to handle seperately
-
-    def _milp_build_task_problem(self):
-        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
-        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
-        ramekin_x_var = self._mdl.get_var_by_name(
-            "glazed_rim_porcelain_ramekin_1_x"
-        )
-        ramekin_y_var = self._mdl.get_var_by_name(
-            "glazed_rim_porcelain_ramekin_1_y"
-        )
-        self._mdl.add_constraint(bowl_1_x_var == ramekin_x_var)
-        self._mdl.add_constraint(bowl_1_y_var == ramekin_y_var)
-
-        # akita_black_bowl_2 cannot be on glazed_rim_porcelain_ramekin_1 without
-        # overlapping with akita_black_bowl_1, so no need to handle seperately
-
-
-@register_problem
-class Task_3(Libero_Spatial_Attack):
-    """This task requires that akita_black_bowl_1 is close to
-    glazed_rim_porcelain_ramekin_1 and akita_black_bowl_2 is not
-    """
-
-    next_to_bound = 0.1
-    far_from_bound = 0.2
-
-    def check_valid_env(self):
-        self._check_valid_env_basic()
-        self._check_valid_env_task()
-
-    def milp_build_problem(self):
-        assert hasattr(self, "_mdl")
-        self._milp_build_basic_problem()
-        self._milp_build_task_problem()
-
-    def _check_valid_env_task(self):
-        ramekin_x, ramekin_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["glazed_rim_porcelain_ramekin_1"]
-        ]
-
-        padding = (
-            self.objects_dict[
-                "glazed_rim_porcelain_ramekin_1"
-            ].horizontal_radius
-            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-        )
-
-        bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_1"]
-        ]
-        if (
-            max(abs(bowl_1_x - ramekin_x), abs(bowl_1_y - ramekin_y))
-            > padding + self.next_to_bound
-        ):
-            raise ValueError(
-                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
-                f"to ramekin_1 at {np.array([ramekin_x, ramekin_y])}"
-            )
-
-        bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_2"]
-        ]
-        if (
-            max(abs(bowl_2_x - ramekin_x), abs(bowl_2_y - ramekin_y))
-            < padding + self.far_from_bound
-        ):
-            raise ValueError(
-                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
-                f"ramekin_1 at {np.array([ramekin_x, ramekin_y])}"
-            )
-
-    def _milp_build_task_problem(self):
-        ramekin_x_var = self._mdl.get_var_by_name(
-            "glazed_rim_porcelain_ramekin_1_x"
-        )
-        ramekin_y_var = self._mdl.get_var_by_name(
-            "glazed_rim_porcelain_ramekin_1_y"
-        )
-
-        padding = (
-            self.objects_dict[
-                "glazed_rim_porcelain_ramekin_1"
-            ].horizontal_radius
-            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-        )
-
-        # make sure akita_black_bowl_1 is close to ramekin_1
-        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
-        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
-        self._mdl.add_constraint(
-            self._mdl.max(
-                self._mdl.abs(bowl_1_x_var - ramekin_x_var),
-                self._mdl.abs(bowl_1_y_var - ramekin_y_var),
-            )
-            <= padding + self.next_to_bound - 1e-6
-        )
-
-        # make sure akita_black_bowl_2 is not close to ramekin_1
-        bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
-        bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
-        self._mdl.add_constraint(
-            self._mdl.max(
-                self._mdl.abs(bowl_2_x_var - ramekin_x_var),
-                self._mdl.abs(bowl_2_y_var - ramekin_y_var),
-            )
-            >= padding + self.far_from_bound + 1e-6
-        )
-
-
-@register_problem
-class Task_4(Libero_Spatial_Attack):
-    """This task requires that akita_black_bowl_1 is on cookies_1."""
-
-    def check_valid_env(self):
-        self._check_valid_env_basic()
-        self._check_valid_env_task()
-
-    def milp_build_problem(self):
-        assert hasattr(self, "_mdl")
-        self._milp_build_basic_problem()
-        self._milp_build_task_problem()
-
-    def _check_valid_env_task(self):
-        cookies_x, cookies_y, cookies_z = self.sim.data.body_xpos[
-            self.obj_body_id["cookies_1"]
-        ]
-        bowl_1_x, bowl_1_y, bowl_1_z = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_1"]
-        ]
-        if not np.all(np.isclose([cookies_x, cookies_y], [bowl_1_x, bowl_1_y])):
-            raise ValueError(
-                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y, bowl_1_z])} is not "
-                f"on cookies_1 at {np.array([cookies_x, cookies_y, cookies_z])}"
-            )
-
-        # akita_black_bowl_2 cannot be on cookies_1 without overlapping with
-        # akita_black_bowl_1, so no need to handle seperately
-
-    def _milp_build_task_problem(self):
-        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
-        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
-        cookies_x_var = self._mdl.get_var_by_name("cookies_1_x")
-        cookies_y_var = self._mdl.get_var_by_name("cookies_1_y")
-        self._mdl.add_constraint(bowl_1_x_var == cookies_x_var)
-        self._mdl.add_constraint(bowl_1_y_var == cookies_y_var)
-
-        # akita_black_bowl_2 cannot be on cookies_1 without overlapping with
-        # akita_black_bowl_1, so no need to handle seperately
-
-
-@register_problem
-class Task_5(Libero_Spatial_Attack):
-    """This task requires that akita_black_bowl_1 is on
-    ``flat_stove_1_cook_region``
-    """
-
-    def check_valid_env(self):
-        self._check_valid_env_basic()
-        self._check_valid_env_task()
-
-    def milp_build_problem(self):
-        assert hasattr(self, "_mdl")
-        self._milp_build_basic_problem()
-        self._milp_build_task_problem()
-
-    def _check_valid_env_task(self):
-        stove_x, stove_y, stove_z = self.sim.data.get_site_xpos(
-            "flat_stove_1_cook_region"
-        )
-        bowl_1_x, bowl_1_y, bowl_1_z = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_1"]
-        ]
-        if not np.all(np.isclose([stove_x, stove_y], [bowl_1_x, bowl_1_y])):
-            raise ValueError(
-                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y, bowl_1_z])} is not "
-                f"on the stove at {np.array([stove_x, stove_y, stove_z])}"
-            )
-
-        # akita_black_bowl_2 cannot be in flat_stove_1_cook_region without
-        # overlapping with akita_black_bowl_1, so no need to handle seperately
-
-    def _milp_build_task_problem(self):
-        stove_x, stove_y, _ = self.sim.data.get_site_xpos(
-            "flat_stove_1_cook_region"
-        )
-        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
-        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
-        self._mdl.add_constraint(bowl_1_x_var == stove_x)
-        self._mdl.add_constraint(bowl_1_y_var == stove_y)
-
-        # akita_black_bowl_2 cannot be in flat_stove_1_cook_region without
-        # overlapping with akita_black_bowl_1, so no need to handle seperately
-
-
-@register_problem
-class Task_6(Libero_Spatial_Attack):
-    """This task requires that akita_black_bowl_1 is close to cookies_1 and
-    akita_black_bowl_2 is not
-    """
-
-    next_to_bound = 0.1
-    far_from_bound = 0.2
-
-    def check_valid_env(self):
-        self._check_valid_env_basic()
-        self._check_valid_env_task()
-
-    def milp_build_problem(self):
-        assert hasattr(self, "_mdl")
-        self._milp_build_basic_problem()
-        self._milp_build_task_problem()
-
-    def _check_valid_env_task(self):
-        cookies_x, cookies_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["cookies_1"]
-        ]
-
-        padding = (
-            self.objects_dict["cookies_1"].horizontal_radius
-            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-        )
-
-        bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_1"]
-        ]
-        if (
-            max(abs(bowl_1_x - cookies_x), abs(bowl_1_y - cookies_y))
-            > padding + self.next_to_bound
-        ):
-            raise ValueError(
-                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
-                f"to cookies_1 at {np.array([cookies_x, cookies_y])}"
-            )
-
-        bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_2"]
-        ]
-        if (
-            max(abs(bowl_2_x - cookies_x), abs(bowl_2_y - cookies_y))
-            < padding + self.far_from_bound
-        ):
-            raise ValueError(
-                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
-                f"cookies_1 at {np.array([cookies_x, cookies_y])}"
-            )
-
-    def _milp_build_task_problem(self):
-        cookies_x_var = self._mdl.get_var_by_name("cookies_1_x")
-        cookies_y_var = self._mdl.get_var_by_name("cookies_1_y")
-
-        padding = (
-            self.objects_dict["cookies_1"].horizontal_radius
-            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
-        )
-
-        # make sure akita_black_bowl_1 is close to cookies_1
-        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
-        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
-        self._mdl.add_constraint(
-            self._mdl.max(
-                self._mdl.abs(bowl_1_x_var - cookies_x_var),
-                self._mdl.abs(bowl_1_y_var - cookies_y_var),
-            )
-            <= padding + self.next_to_bound - 1e-6
-        )
-
-        # make sure akita_black_bowl_2 is not close to cookies_1
-        bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
-        bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
-        self._mdl.add_constraint(
-            self._mdl.max(
-                self._mdl.abs(bowl_2_x_var - cookies_x_var),
-                self._mdl.abs(bowl_2_y_var - cookies_y_var),
-            )
-            >= padding + self.far_from_bound + 1e-6
-        )
-
-
-@register_problem
-class Task_7(Libero_Spatial_Attack):
     """This task requires that akita_black_bowl_1 is between plate_1 and
     glazed_rim_porcelain_ramekin_1 and akita_black_bowl_2 is not.
 
@@ -1265,7 +808,204 @@ class Task_7(Libero_Spatial_Attack):
 
 
 @register_problem
-class Task_8(Libero_Spatial_Attack):
+class Task_1(Libero_Spatial_Attack):
+    """This task requires that akita_black_bowl_1 is close to
+    glazed_rim_porcelain_ramekin_1 and akita_black_bowl_2 is not
+    """
+
+    next_to_bound = 0.1
+    far_from_bound = 0.2
+
+    def check_valid_env(self):
+        self._check_valid_env_basic()
+        self._check_valid_env_task()
+
+    def milp_build_problem(self):
+        assert hasattr(self, "_mdl")
+        self._milp_build_basic_problem()
+        self._milp_build_task_problem()
+
+    def _check_valid_env_task(self):
+        ramekin_x, ramekin_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["glazed_rim_porcelain_ramekin_1"]
+        ]
+
+        padding = (
+            self.objects_dict[
+                "glazed_rim_porcelain_ramekin_1"
+            ].horizontal_radius
+            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
+        )
+
+        bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_1"]
+        ]
+        if (
+            max(abs(bowl_1_x - ramekin_x), abs(bowl_1_y - ramekin_y))
+            > padding + self.next_to_bound
+        ):
+            raise ValueError(
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
+                f"to ramekin_1 at {np.array([ramekin_x, ramekin_y])}"
+            )
+
+        bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_2"]
+        ]
+        if (
+            max(abs(bowl_2_x - ramekin_x), abs(bowl_2_y - ramekin_y))
+            < padding + self.far_from_bound
+        ):
+            raise ValueError(
+                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
+                f"ramekin_1 at {np.array([ramekin_x, ramekin_y])}"
+            )
+
+    def _milp_build_task_problem(self):
+        ramekin_x_var = self._mdl.get_var_by_name(
+            "glazed_rim_porcelain_ramekin_1_x"
+        )
+        ramekin_y_var = self._mdl.get_var_by_name(
+            "glazed_rim_porcelain_ramekin_1_y"
+        )
+
+        padding = (
+            self.objects_dict[
+                "glazed_rim_porcelain_ramekin_1"
+            ].horizontal_radius
+            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
+        )
+
+        # make sure akita_black_bowl_1 is close to ramekin_1
+        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
+        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
+        self._mdl.add_constraint(
+            self._mdl.max(
+                self._mdl.abs(bowl_1_x_var - ramekin_x_var),
+                self._mdl.abs(bowl_1_y_var - ramekin_y_var),
+            )
+            <= padding + self.next_to_bound - 1e-6
+        )
+
+        # make sure akita_black_bowl_2 is not close to ramekin_1
+        bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
+        bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
+        self._mdl.add_constraint(
+            self._mdl.max(
+                self._mdl.abs(bowl_2_x_var - ramekin_x_var),
+                self._mdl.abs(bowl_2_y_var - ramekin_y_var),
+            )
+            >= padding + self.far_from_bound + 1e-6
+        )
+
+
+@register_problem
+class Task_2(Libero_Spatial_Attack):
+    """This task requires that akita_black_bowl_1 is within bounds
+    ``main_table_table_center`` and akita_black_bowl_2 is not.
+    """
+
+    def check_valid_env(self):
+        self._check_valid_env_basic()
+        self._check_valid_env_task()
+
+    def milp_build_problem(self):
+        assert hasattr(self, "_mdl")
+        self._milp_build_basic_problem()
+        self._milp_build_task_problem()
+
+    def _check_valid_env_task(self):
+        xl, yl, xh, yh = self.parsed_problem["regions"][
+            "main_table_table_center"
+        ]["ranges"][0]
+
+        bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_1"]
+        ]
+        if not (xl <= bowl_1_x <= xh and yl <= bowl_1_y <= yh):
+            raise ValueError(
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not within "
+                f"bounds {xl}<=x<={xh}; {yl}<=y<={yh}"
+            )
+
+        bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_2"]
+        ]
+        if xl < bowl_2_x < xh or yl < bowl_2_y < yh:
+            raise ValueError(
+                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is within "
+                f"bounds {xl}<=x<={xh}; {yl}<=y<={yh}"
+            )
+
+    def _milp_build_task_problem(self):
+        xl, yl, xh, yh = self.parsed_problem["regions"][
+            "main_table_table_center"
+        ]["ranges"][0]
+
+        # make sure akita_black_bowl_1 is within bounds
+        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
+        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
+        self._mdl.add_constraint(bowl_1_x_var >= xl + 1e-6)
+        self._mdl.add_constraint(bowl_1_x_var <= xh - 1e-6)
+        self._mdl.add_constraint(bowl_1_y_var >= yl + 1e-6)
+        self._mdl.add_constraint(bowl_1_y_var <= yh - 1e-6)
+
+        # make sure akita_black_bowl_2_x is not within x bounds, i.e. either
+        # below lb or above ub
+        bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
+        bowl_2_x_smt_lb = self._mdl.binary_var(name="bowl_2_x_smt_lb")
+        self._mdl.add_indicator(bowl_2_x_smt_lb, bowl_2_x_var <= xl - 1e-6, 1)
+        self._mdl.add_indicator(bowl_2_x_smt_lb, bowl_2_x_var >= xh + 1e-6, 0)
+        # make sure akita_black_bowl_2_y is not within y bounds
+        bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
+        bowl_2_y_smt_lb = self._mdl.binary_var(name="bowl_2_y_smt_lb")
+        self._mdl.add_indicator(bowl_2_y_smt_lb, bowl_2_y_var <= yl - 1e-6, 1)
+        self._mdl.add_indicator(bowl_2_y_smt_lb, bowl_2_y_var >= yh + 1e-6, 0)
+
+
+@register_problem
+class Task_3(Libero_Spatial_Attack):
+    """This task requires that akita_black_bowl_1 is on cookies_1."""
+
+    def check_valid_env(self):
+        self._check_valid_env_basic()
+        self._check_valid_env_task()
+
+    def milp_build_problem(self):
+        assert hasattr(self, "_mdl")
+        self._milp_build_basic_problem()
+        self._milp_build_task_problem()
+
+    def _check_valid_env_task(self):
+        cookies_x, cookies_y, cookies_z = self.sim.data.body_xpos[
+            self.obj_body_id["cookies_1"]
+        ]
+        bowl_1_x, bowl_1_y, bowl_1_z = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_1"]
+        ]
+        if not np.all(np.isclose([cookies_x, cookies_y], [bowl_1_x, bowl_1_y])):
+            raise ValueError(
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y, bowl_1_z])} is not "
+                f"on cookies_1 at {np.array([cookies_x, cookies_y, cookies_z])}"
+            )
+
+        # akita_black_bowl_2 cannot be on cookies_1 without overlapping with
+        # akita_black_bowl_1, so no need to handle seperately
+
+    def _milp_build_task_problem(self):
+        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
+        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
+        cookies_x_var = self._mdl.get_var_by_name("cookies_1_x")
+        cookies_y_var = self._mdl.get_var_by_name("cookies_1_y")
+        self._mdl.add_constraint(bowl_1_x_var == cookies_x_var)
+        self._mdl.add_constraint(bowl_1_y_var == cookies_y_var)
+
+        # akita_black_bowl_2 cannot be on cookies_1 without overlapping with
+        # akita_black_bowl_1, so no need to handle seperately
+
+
+@register_problem
+class Task_4(Libero_Spatial_Attack):
     """This task requires that akita_black_bowl_1 is on
     ``wooden_cabinet_1_top_region``
 
@@ -1470,6 +1210,266 @@ class Task_8(Libero_Spatial_Attack):
 
         # akita_black_bowl_2 cannot be in wooden_cabinet_1_top_region without
         # overlapping with akita_black_bowl_1, so no need to handle seperately
+
+
+@register_problem
+class Task_5(Libero_Spatial_Attack):
+    """This task requires that akita_black_bowl_1 is on
+    glazed_rim_porcelain_ramekin_1.
+    """
+
+    def check_valid_env(self):
+        self._check_valid_env_basic()
+        self._check_valid_env_task()
+
+    def milp_build_problem(self):
+        assert hasattr(self, "_mdl")
+        self._milp_build_basic_problem()
+        self._milp_build_task_problem()
+
+    def _check_valid_env_task(self):
+        ramekin_x, ramekin_y, ramekin_z = self.sim.data.body_xpos[
+            self.obj_body_id["glazed_rim_porcelain_ramekin_1"]
+        ]
+        bowl_1_x, bowl_1_y, bowl_1_z = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_1"]
+        ]
+        if not np.all(np.isclose([ramekin_x, ramekin_y], [bowl_1_x, bowl_1_y])):
+            raise ValueError(
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y, bowl_1_z])} is not "
+                "on glazed_rim_porcelain_ramekin_1 at "
+                f"{np.array([ramekin_x, ramekin_y, ramekin_z])}"
+            )
+
+        # akita_black_bowl_2 cannot be on glazed_rim_porcelain_ramekin_1 without
+        # overlapping with akita_black_bowl_1, so no need to handle seperately
+
+    def _milp_build_task_problem(self):
+        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
+        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
+        ramekin_x_var = self._mdl.get_var_by_name(
+            "glazed_rim_porcelain_ramekin_1_x"
+        )
+        ramekin_y_var = self._mdl.get_var_by_name(
+            "glazed_rim_porcelain_ramekin_1_y"
+        )
+        self._mdl.add_constraint(bowl_1_x_var == ramekin_x_var)
+        self._mdl.add_constraint(bowl_1_y_var == ramekin_y_var)
+
+        # akita_black_bowl_2 cannot be on glazed_rim_porcelain_ramekin_1 without
+        # overlapping with akita_black_bowl_1, so no need to handle seperately
+
+
+@register_problem
+class Task_6(Libero_Spatial_Attack):
+    """This task requires that akita_black_bowl_1 is close to cookies_1 and
+    akita_black_bowl_2 is not
+    """
+
+    next_to_bound = 0.1
+    far_from_bound = 0.2
+
+    def check_valid_env(self):
+        self._check_valid_env_basic()
+        self._check_valid_env_task()
+
+    def milp_build_problem(self):
+        assert hasattr(self, "_mdl")
+        self._milp_build_basic_problem()
+        self._milp_build_task_problem()
+
+    def _check_valid_env_task(self):
+        cookies_x, cookies_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["cookies_1"]
+        ]
+
+        padding = (
+            self.objects_dict["cookies_1"].horizontal_radius
+            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
+        )
+
+        bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_1"]
+        ]
+        if (
+            max(abs(bowl_1_x - cookies_x), abs(bowl_1_y - cookies_y))
+            > padding + self.next_to_bound
+        ):
+            raise ValueError(
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
+                f"to cookies_1 at {np.array([cookies_x, cookies_y])}"
+            )
+
+        bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_2"]
+        ]
+        if (
+            max(abs(bowl_2_x - cookies_x), abs(bowl_2_y - cookies_y))
+            < padding + self.far_from_bound
+        ):
+            raise ValueError(
+                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
+                f"cookies_1 at {np.array([cookies_x, cookies_y])}"
+            )
+
+    def _milp_build_task_problem(self):
+        cookies_x_var = self._mdl.get_var_by_name("cookies_1_x")
+        cookies_y_var = self._mdl.get_var_by_name("cookies_1_y")
+
+        padding = (
+            self.objects_dict["cookies_1"].horizontal_radius
+            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
+        )
+
+        # make sure akita_black_bowl_1 is close to cookies_1
+        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
+        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
+        self._mdl.add_constraint(
+            self._mdl.max(
+                self._mdl.abs(bowl_1_x_var - cookies_x_var),
+                self._mdl.abs(bowl_1_y_var - cookies_y_var),
+            )
+            <= padding + self.next_to_bound - 1e-6
+        )
+
+        # make sure akita_black_bowl_2 is not close to cookies_1
+        bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
+        bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
+        self._mdl.add_constraint(
+            self._mdl.max(
+                self._mdl.abs(bowl_2_x_var - cookies_x_var),
+                self._mdl.abs(bowl_2_y_var - cookies_y_var),
+            )
+            >= padding + self.far_from_bound + 1e-6
+        )
+
+
+@register_problem
+class Task_7(Libero_Spatial_Attack):
+    """This task requires that akita_black_bowl_1 is on
+    ``flat_stove_1_cook_region``
+    """
+
+    def check_valid_env(self):
+        self._check_valid_env_basic()
+        self._check_valid_env_task()
+
+    def milp_build_problem(self):
+        assert hasattr(self, "_mdl")
+        self._milp_build_basic_problem()
+        self._milp_build_task_problem()
+
+    def _check_valid_env_task(self):
+        stove_x, stove_y, stove_z = self.sim.data.get_site_xpos(
+            "flat_stove_1_cook_region"
+        )
+        bowl_1_x, bowl_1_y, bowl_1_z = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_1"]
+        ]
+        if not np.all(np.isclose([stove_x, stove_y], [bowl_1_x, bowl_1_y])):
+            raise ValueError(
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y, bowl_1_z])} is not "
+                f"on the stove at {np.array([stove_x, stove_y, stove_z])}"
+            )
+
+        # akita_black_bowl_2 cannot be in flat_stove_1_cook_region without
+        # overlapping with akita_black_bowl_1, so no need to handle seperately
+
+    def _milp_build_task_problem(self):
+        stove_x, stove_y, _ = self.sim.data.get_site_xpos(
+            "flat_stove_1_cook_region"
+        )
+        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
+        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
+        self._mdl.add_constraint(bowl_1_x_var == stove_x)
+        self._mdl.add_constraint(bowl_1_y_var == stove_y)
+
+        # akita_black_bowl_2 cannot be in flat_stove_1_cook_region without
+        # overlapping with akita_black_bowl_1, so no need to handle seperately
+
+
+@register_problem
+class Task_8(Libero_Spatial_Attack):
+    """This task requires that akita_black_bowl_1 is close to plate_1 and
+    akita_black_bowl_2 is not
+    """
+
+    next_to_bound = 0.1
+    far_from_bound = 0.2
+
+    def check_valid_env(self):
+        self._check_valid_env_basic()
+        self._check_valid_env_task()
+
+    def milp_build_problem(self):
+        assert hasattr(self, "_mdl")
+        self._milp_build_basic_problem()
+        self._milp_build_task_problem()
+
+    def _check_valid_env_task(self):
+        plate_x, plate_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["plate_1"]
+        ]
+
+        padding = (
+            self.objects_dict["plate_1"].horizontal_radius
+            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
+        )
+
+        bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_1"]
+        ]
+        if (
+            max(abs(bowl_1_x - plate_x), abs(bowl_1_y - plate_y))
+            > padding + self.next_to_bound
+        ):
+            raise ValueError(
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
+                f"to plate_1 at {np.array([plate_x, plate_y])}"
+            )
+
+        bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_2"]
+        ]
+        if (
+            max(abs(bowl_2_x - plate_x), abs(bowl_2_y - plate_y))
+            < padding + self.far_from_bound
+        ):
+            raise ValueError(
+                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
+                f"plate_1 at {np.array([plate_x, plate_y])}"
+            )
+
+    def _milp_build_task_problem(self):
+        plate_x_var = self._mdl.get_var_by_name("plate_1_x")
+        plate_y_var = self._mdl.get_var_by_name("plate_1_y")
+
+        padding = (
+            self.objects_dict["plate_1"].horizontal_radius
+            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
+        )
+
+        # make sure akita_black_bowl_1 is close to plate_1
+        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
+        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
+        self._mdl.add_constraint(
+            self._mdl.max(
+                self._mdl.abs(bowl_1_x_var - plate_x_var),
+                self._mdl.abs(bowl_1_y_var - plate_y_var),
+            )
+            <= padding + self.next_to_bound - 1e-6
+        )
+
+        # make sure akita_black_bowl_2 is not close to plate_1
+        bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
+        bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
+        self._mdl.add_constraint(
+            self._mdl.max(
+                self._mdl.abs(bowl_2_x_var - plate_x_var),
+                self._mdl.abs(bowl_2_y_var - plate_y_var),
+            )
+            >= padding + self.far_from_bound + 1e-6
+        )
 
 
 @register_problem

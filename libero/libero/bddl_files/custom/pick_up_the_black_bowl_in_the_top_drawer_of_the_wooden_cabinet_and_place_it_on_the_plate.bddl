@@ -1,4 +1,4 @@
-(define (problem Task_8)
+(define (problem Task_4)
   (:domain robosuite)
   (:language Pick the akita black bowl in the top layer of the wooden cabinet and place it on the plate)
     (:regions
