@@ -57,7 +57,8 @@ libero_suites = [
     "libero_goal",
     "libero_90",
     "libero_10",
-    "custom",
+    "milp_libero_spatial",
+    "custom"
 ]
 task_maps = {}
 max_len = 0
@@ -72,7 +73,7 @@ for libero_suite in libero_suites:
             problem="Libero",
             problem_folder=libero_suite,
             bddl_file=f"{task}.bddl",
-            init_states_file=None if libero_suite == "custom" else f"{task}.pruned_init",
+            init_states_file=None if libero_suite in ["milp_libero_spatial", "custom"] else f"{task}.pruned_init",
         )
 
         # print(language, "\n", f"{task}.bddl", "\n")
@@ -113,7 +114,7 @@ class Benchmark(abc.ABC):
 
     def _make_benchmark(self):
         tasks = list(task_maps[self.name].values())
-        if self.name in ["libero_90", "custom"]:
+        if self.name in ["libero_90", "milp_libero_spatial", "custom"]:
             self.tasks = tasks
         else:
             print(
@@ -222,6 +223,14 @@ class LIBERO_100(Benchmark):
     def __init__(self, task_order_index=0):
         super().__init__(task_order_index=task_order_index)
         self.name = "libero_100"
+        self._make_benchmark()
+
+
+@register_benchmark
+class MILP_LIBERO_SPATIAL(Benchmark):
+    def __init__(self, task_order_index=0):
+        super().__init__(task_order_index=task_order_index)
+        self.name = "milp_libero_spatial"
         self._make_benchmark()
 
 
