@@ -32,6 +32,7 @@ REGION_SAMPLERS = {
     "task_7": {"table": TableRegionSampler},
     "task_8": {"table": TableRegionSampler},
     "task_9": {"table": TableRegionSampler},
+    "jaco_custom_tabletop": {"table": TableRegionSampler},
 }
 
 

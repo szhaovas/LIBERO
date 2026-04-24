@@ -22,10 +22,11 @@ class Libero_Tabletop_Manipulation(BDDLBaseDomain):
         self.workspace_name = "main_table"
         self.visualization_sites_list = []
         if "table_full_size" in kwargs:
-            self.table_full_size = table_full_size
+            self.table_full_size = kwargs["table_full_size"]
         else:
             self.table_full_size = (1.0, 1.2, 0.05)
-        self.table_offset = (0, 0, 0.90)
+        if "workspace_offset" not in kwargs:
+            kwargs.update({"workspace_offset": (0, 0, 0.90)})
         # For z offset of environment fixtures
         self.z_offset = 0.01 - self.table_full_size[2]
         kwargs.update(
@@ -35,7 +36,6 @@ class Libero_Tabletop_Manipulation(BDDLBaseDomain):
                 ]
             }
         )
-        kwargs.update({"workspace_offset": self.table_offset})
         kwargs.update({"arena_type": "table"})
 
         if "scene_xml" not in kwargs or kwargs["scene_xml"] is None:
@@ -1514,3 +1514,81 @@ class Task_9(Libero_Spatial_Attack):
 
         # akita_black_bowl_2 cannot be on the cabinet without overlapping with
         # akita_black_bowl_1, so no need to handle seperately
+
+
+@register_problem
+class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
+    table_bounds = [-0.61, -0.39, 0.61, 0.39]
+
+    def __init__(
+        self, bddl_file_name, *args, env_params, repair_config=None, **kwargs
+    ):
+        kwargs.update({"robots": ["Jaco6DOF"]})
+        kwargs.update({"scene_xml": "scenes/custom_tabletop.xml"})
+        kwargs.update({"scene_properties": {
+                "floor_style": "light-gray",
+                "wall_style": "white",
+                "table_visual_half_size": (0.61, 0.49, 0.025),
+                "autoset_wall_texture": False
+            }
+        })
+        kwargs.update({"table_full_size": (1.22, 0.78, 0.05)})
+        kwargs.update({"workspace_offset": (0, 0, 0.92)})
+
+        super().__init__(bddl_file_name, *args, env_params=env_params, repair_config=repair_config, **kwargs)
+
+    def _setup_camera(self, mujoco_arena):
+        mujoco_arena.set_camera(
+            camera_name="agentview",
+            pos=[0.61, 0.0, 1.81],
+            quat=[
+                0.668,
+                0.231,
+                0.231,
+                0.668,
+            ],
+            camera_attribs={"fovy": "58"} # from RealSense D435i
+        )
+
+    def _load_model(self):
+        super()._load_model()
+        # Rotating the robot here since set_base_ori gets ignored in init and reset
+        self.robots[0].robot_model.set_base_ori((0, 0, np.pi/2))
+
+    def _check_valid_env_task(self):
+        pass
+
+    def _milp_build_task_problem(self):
+        pass
+
+    def reset(self):
+        """Essentially the same reset as in robosuite MujocoEnv except it
+        modifies the environment according to :attr:`env_params` at the end.
+
+        Returns:
+            observations (dict): Same as MujocoEnv reset.
+        """
+        Libero_Tabletop_Manipulation.reset(self)
+
+        # Set object arrangement
+        self._place_objects(self.env_params)
+
+        try:
+            self.check_valid_env()
+        except Exception as e:
+            if self._repair_config is not None:
+                print(e)
+                try:
+                    self.try_milp_repair()
+                except:
+                    raise
+            else:
+                raise
+
+        observations = (
+            self.viewer._get_observations(force_update=True)
+            if self.viewer_get_obs
+            else self._get_observations(force_update=True)
+        )
+
+        return observations

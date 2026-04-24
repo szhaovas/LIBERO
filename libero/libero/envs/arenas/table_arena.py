@@ -34,8 +34,12 @@ class TableArena(Arena):
         xml="arenas/table_arena.xml",
         floor_style="light-gray",
         wall_style="light-gray-plaster",
+        table_visual_half_size=None,
+        autoset_wall_texture=True,
     ):
         super().__init__(xml_path_completion(xml))
+
+        self.table_visual_half_size = table_visual_half_size
 
         self.table_full_size = np.array(table_full_size)
         self.table_half_size = self.table_full_size / 2
@@ -69,13 +73,14 @@ class TableArena(Arena):
         )
         texplane.set("file", plane_file)
 
-        texwall = self.asset.find("./texture[@name='tex-wall']")
-        wall_file = texwall.get("file")
-        wall_file = "/".join(
-            wall_file.split("/")[:-1]
-            + [get_texture_filename(type="wall", style=wall_style)]
-        )
-        texwall.set("file", wall_file)
+        if autoset_wall_texture:
+            texwall = self.asset.find("./texture[@name='tex-wall']")
+            wall_file = texwall.get("file")
+            wall_file = "/".join(
+                wall_file.split("/")[:-1]
+                + [get_texture_filename(type="wall", style=wall_style)]
+            )
+            texwall.set("file", wall_file)
 
     def configure_location(self):
         """Configures correct locations for this arena"""
@@ -84,7 +89,10 @@ class TableArena(Arena):
         self.table_body.set("pos", array_to_string(self.center_pos))
         self.table_collision.set("size", array_to_string(self.table_half_size))
         self.table_collision.set("friction", array_to_string(self.table_friction))
-        self.table_visual.set("size", array_to_string(self.table_half_size))
+        if self.table_visual_half_size is None:
+            self.table_visual.set("size", array_to_string(self.table_half_size))
+        else:
+            self.table_visual.set("size", array_to_string(self.table_visual_half_size))
         # self.table_visual.set("rgba", array_to_string([0, 0, 0, 0]))
 
         self.table_top.set(
