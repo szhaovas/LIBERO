@@ -255,13 +255,14 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
     repair_retry_limit = 5
 
     def __init__(
-        self, bddl_file_name, *args, env_params, repair_config=None, **kwargs
+        self, bddl_file_name, *args, env_params=None, repair_config=None, **kwargs
     ):
         super().__init__(bddl_file_name, *args, **kwargs)
 
         # env_params have to be processed at the end of reset() or they will get
         # overwritten
-        self._env_params = env_params.copy()
+        if env_params is not None:
+            self._env_params = env_params.copy()
 
         self._repair_config = repair_config
         if self._repair_config is not None:
@@ -287,6 +288,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
               light_spec_r, light_spec_g, light_spec_b,
           ]
         """
+        assert hasattr(self, "_env_params")
         return self._env_params
 
     def _reset_milp(self):
@@ -557,7 +559,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                     num_milp_retry += 1
                     continue
 
-                self._env_params[:10] = repaired_params
+                self._env_params[:2*len(self.objects_dict)] = repaired_params
                 print(f"Found new env_params: {self.env_params}")
                 return
 
@@ -574,56 +576,59 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         """
         Libero_Tabletop_Manipulation.reset(self)
 
-        # A bunch of modifications inspired from robosuite/utils/mjmod.py
-        # Set lighting position
-        self.sim.model.light_pos[self.sim.model.light_name2id("light1")] = (
-            self.env_params[10:13]
-        )
+        if hasattr(self, "_env_params"):
+            obj_xy_end_idx = 2 * len(self.objects_dict)
 
-        # Set camera position
-        self.sim.model.cam_pos[self.sim.model.camera_name2id("agentview")] = (
-            self.env_params[13:16]
-        )
-
-        # Set material color hint
-        self.sim.model.mat_rgba[
-            mujoco.mj_name2id(
-                self.sim.model._model,
-                int(mujoco.mjtObj.mjOBJ_MATERIAL),
-                "table_texture",
+            # A bunch of modifications inspired from robosuite/utils/mjmod.py
+            # Set lighting position
+            self.sim.model.light_pos[self.sim.model.light_name2id("light1")] = (
+                self.env_params[obj_xy_end_idx:obj_xy_end_idx+3]
             )
-        ][:-1] = np.clip(self.env_params[16:19], 0, 1)
-        # TODO: More objects
 
-        # Set camera quaternion
-        camera_R = R.from_quat(
-            self.sim.model.cam_quat[self.sim.model.camera_name2id("agentview")]
-        )
-        R_noise = R.from_rotvec(self.env_params[19:22])
-        camera_R *= R_noise
-        self.sim.model.cam_quat[self.sim.model.camera_name2id("agentview")] = (
-            camera_R.as_quat()
-        )
+            # Set camera position
+            self.sim.model.cam_pos[self.sim.model.camera_name2id("agentview")] = (
+                self.env_params[obj_xy_end_idx+3:obj_xy_end_idx+6]
+            )
 
-        # Set lighting specular
-        self.sim.model.light_specular[
-            self.sim.model.light_name2id("light1")
-        ] = np.clip(self.env_params[22:25], 0, 1)
+            # Set material color hint
+            self.sim.model.mat_rgba[
+                mujoco.mj_name2id(
+                    self.sim.model._model,
+                    int(mujoco.mjtObj.mjOBJ_MATERIAL),
+                    "table_texture",
+                )
+            ][:-1] = np.clip(self.env_params[obj_xy_end_idx+6:obj_xy_end_idx+9], 0, 1)
+            # TODO: More objects
 
-        # Set object arrangement
-        self._place_objects(self.env_params[:10])
+            # Set camera quaternion
+            camera_R = R.from_quat(
+                self.sim.model.cam_quat[self.sim.model.camera_name2id("agentview")]
+            )
+            R_noise = R.from_rotvec(self.env_params[obj_xy_end_idx+9:obj_xy_end_idx+12])
+            camera_R *= R_noise
+            self.sim.model.cam_quat[self.sim.model.camera_name2id("agentview")] = (
+                camera_R.as_quat()
+            )
 
-        try:
-            self.check_valid_env()
-        except Exception as e:
-            if self._repair_config is not None:
-                print(e)
-                try:
-                    self.try_milp_repair()
-                except:
+            # Set lighting specular
+            self.sim.model.light_specular[
+                self.sim.model.light_name2id("light1")
+            ] = np.clip(self.env_params[obj_xy_end_idx+12:obj_xy_end_idx+15], 0, 1)
+
+            # Set object arrangement
+            self._place_objects(self.env_params[:obj_xy_end_idx])
+
+            try:
+                self.check_valid_env()
+            except Exception as e:
+                if self._repair_config is not None:
+                    print(e)
+                    try:
+                        self.try_milp_repair()
+                    except:
+                        raise
+                else:
                     raise
-            else:
-                raise
 
         observations = (
             self.viewer._get_observations(force_update=True)
@@ -1516,23 +1521,22 @@ class Task_9(Libero_Spatial_Attack):
         # akita_black_bowl_1, so no need to handle seperately
 
 
-@register_problem
 class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
-    table_bounds = [-0.61, -0.39, 0.61, 0.39]
+    table_bounds = [-0.8, -0.4, 0.8, 0.4]
 
     def __init__(
-        self, bddl_file_name, *args, env_params, repair_config=None, **kwargs
+        self, bddl_file_name, *args, env_params=None, repair_config=None, **kwargs
     ):
         kwargs.update({"robots": ["Jaco6DOF"]})
-        kwargs.update({"scene_xml": "scenes/custom_tabletop.xml"})
+        kwargs.update({"scene_xml": "scenes/libero_tabletop_custom_style.xml"})
         kwargs.update({"scene_properties": {
                 "floor_style": "light-gray",
                 "wall_style": "white",
-                "table_visual_half_size": (0.61, 0.49, 0.025),
+                "table_visual_half_size": (0.8, 0.5, 0.025),
                 "autoset_wall_texture": False
             }
         })
-        kwargs.update({"table_full_size": (1.22, 0.78, 0.05)})
+        kwargs.update({"table_full_size": (1.60, 0.80, 0.05)})
         kwargs.update({"workspace_offset": (0, 0, 0.92)})
 
         super().__init__(bddl_file_name, *args, env_params=env_params, repair_config=repair_config, **kwargs)
@@ -1540,7 +1544,7 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
     def _setup_camera(self, mujoco_arena):
         mujoco_arena.set_camera(
             camera_name="agentview",
-            pos=[0.61, 0.0, 1.81],
+            pos=[0.76, 0.0, 1.83],
             quat=[
                 0.668,
                 0.231,
@@ -1553,42 +1557,152 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
     def _load_model(self):
         super()._load_model()
         # Rotating the robot here since set_base_ori gets ignored in init and reset
-        self.robots[0].robot_model.set_base_ori((0, 0, np.pi/2))
+        self.robots[0].robot_model.set_base_ori((0, 0, np.pi))
+
+
+@register_problem
+class Jaco_Custom_Tabletop_Task_0(Jaco_Custom_Tabletop):
+    """This task requires that akita_black_bowl_1 is within bounds
+    ``main_table_table_center`` and akita_black_bowl_2 is not.
+    """
+
+    def check_valid_env(self):
+        self._check_valid_env_basic()
+        self._check_valid_env_task()
+
+    def milp_build_problem(self):
+        assert hasattr(self, "_mdl")
+        self._milp_build_basic_problem()
+        self._milp_build_task_problem()
 
     def _check_valid_env_task(self):
-        pass
+        xl, yl, xh, yh = self.parsed_problem["regions"][
+            "main_table_table_center"
+        ]["ranges"][0]
+
+        bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_1"]
+        ]
+        if not (xl <= bowl_1_x <= xh and yl <= bowl_1_y <= yh):
+            raise ValueError(
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not within "
+                f"bounds {xl}<=x<={xh}; {yl}<=y<={yh}"
+            )
+
+        bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_2"]
+        ]
+        if xl < bowl_2_x < xh or yl < bowl_2_y < yh:
+            raise ValueError(
+                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is within "
+                f"bounds {xl}<=x<={xh}; {yl}<=y<={yh}"
+            )
 
     def _milp_build_task_problem(self):
-        pass
+        xl, yl, xh, yh = self.parsed_problem["regions"][
+            "main_table_table_center"
+        ]["ranges"][0]
 
-    def reset(self):
-        """Essentially the same reset as in robosuite MujocoEnv except it
-        modifies the environment according to :attr:`env_params` at the end.
+        # make sure akita_black_bowl_1 is within bounds
+        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
+        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
+        self._mdl.add_constraint(bowl_1_x_var >= xl + 1e-6)
+        self._mdl.add_constraint(bowl_1_x_var <= xh - 1e-6)
+        self._mdl.add_constraint(bowl_1_y_var >= yl + 1e-6)
+        self._mdl.add_constraint(bowl_1_y_var <= yh - 1e-6)
 
-        Returns:
-            observations (dict): Same as MujocoEnv reset.
-        """
-        Libero_Tabletop_Manipulation.reset(self)
+        # make sure akita_black_bowl_2_x is not within x bounds, i.e. either
+        # below lb or above ub
+        bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
+        bowl_2_x_smt_lb = self._mdl.binary_var(name="bowl_2_x_smt_lb")
+        self._mdl.add_indicator(bowl_2_x_smt_lb, bowl_2_x_var <= xl - 1e-6, 1)
+        self._mdl.add_indicator(bowl_2_x_smt_lb, bowl_2_x_var >= xh + 1e-6, 0)
+        # make sure akita_black_bowl_2_y is not within y bounds
+        bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
+        bowl_2_y_smt_lb = self._mdl.binary_var(name="bowl_2_y_smt_lb")
+        self._mdl.add_indicator(bowl_2_y_smt_lb, bowl_2_y_var <= yl - 1e-6, 1)
+        self._mdl.add_indicator(bowl_2_y_smt_lb, bowl_2_y_var >= yh + 1e-6, 0)
 
-        # Set object arrangement
-        self._place_objects(self.env_params)
 
-        try:
-            self.check_valid_env()
-        except Exception as e:
-            if self._repair_config is not None:
-                print(e)
-                try:
-                    self.try_milp_repair()
-                except:
-                    raise
-            else:
-                raise
+@register_problem
+class Jaco_Custom_Tabletop_Task_1(Jaco_Custom_Tabletop):
+    """This task requires that akita_black_bowl_1 is close to plate_1 and
+    akita_black_bowl_2 is not
+    """
 
-        observations = (
-            self.viewer._get_observations(force_update=True)
-            if self.viewer_get_obs
-            else self._get_observations(force_update=True)
+    next_to_bound = 0.1
+    far_from_bound = 0.2
+
+    def check_valid_env(self):
+        self._check_valid_env_basic()
+        self._check_valid_env_task()
+
+    def milp_build_problem(self):
+        assert hasattr(self, "_mdl")
+        self._milp_build_basic_problem()
+        self._milp_build_task_problem()
+
+    def _check_valid_env_task(self):
+        plate_x, plate_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["plate_1"]
+        ]
+
+        padding = (
+            self.objects_dict["plate_1"].horizontal_radius
+            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
         )
 
-        return observations
+        bowl_1_x, bowl_1_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_1"]
+        ]
+        if (
+            max(abs(bowl_1_x - plate_x), abs(bowl_1_y - plate_y))
+            > padding + self.next_to_bound
+        ):
+            raise ValueError(
+                f"akita_black_bowl_1 at {np.array([bowl_1_x, bowl_1_y])} is not close "
+                f"to plate_1 at {np.array([plate_x, plate_y])}"
+            )
+
+        bowl_2_x, bowl_2_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_2"]
+        ]
+        if (
+            max(abs(bowl_2_x - plate_x), abs(bowl_2_y - plate_y))
+            < padding + self.far_from_bound
+        ):
+            raise ValueError(
+                f"akita_black_bowl_2 at {np.array([bowl_2_x, bowl_2_y])} is close to "
+                f"plate_1 at {np.array([plate_x, plate_y])}"
+            )
+
+    def _milp_build_task_problem(self):
+        plate_x_var = self._mdl.get_var_by_name("plate_1_x")
+        plate_y_var = self._mdl.get_var_by_name("plate_1_y")
+
+        padding = (
+            self.objects_dict["plate_1"].horizontal_radius
+            + self.objects_dict["akita_black_bowl_1"].horizontal_radius
+        )
+
+        # make sure akita_black_bowl_1 is close to plate_1
+        bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
+        bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
+        self._mdl.add_constraint(
+            self._mdl.max(
+                self._mdl.abs(bowl_1_x_var - plate_x_var),
+                self._mdl.abs(bowl_1_y_var - plate_y_var),
+            )
+            <= padding + self.next_to_bound - 1e-6
+        )
+
+        # make sure akita_black_bowl_2 is not close to plate_1
+        bowl_2_x_var = self._mdl.get_var_by_name("akita_black_bowl_2_x")
+        bowl_2_y_var = self._mdl.get_var_by_name("akita_black_bowl_2_y")
+        self._mdl.add_constraint(
+            self._mdl.max(
+                self._mdl.abs(bowl_2_x_var - plate_x_var),
+                self._mdl.abs(bowl_2_y_var - plate_y_var),
+            )
+            >= padding + self.far_from_bound + 1e-6
+        )
