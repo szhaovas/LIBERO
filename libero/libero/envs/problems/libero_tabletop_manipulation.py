@@ -1532,7 +1532,7 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
         kwargs.update({"scene_properties": {
                 "floor_style": "light-gray",
                 "wall_style": "white",
-                "table_visual_half_size": (0.8, 0.5, 0.025),
+                "table_visual_half_size": (0.9, 0.8, 0.025),
                 "autoset_wall_texture": False
             }
         })
@@ -1544,12 +1544,12 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
     def _setup_camera(self, mujoco_arena):
         mujoco_arena.set_camera(
             camera_name="agentview",
-            pos=[0.76, 0.0, 1.83],
+            pos=[0.76, -0.45, 1.83],
             quat=[
-                0.668,
-                0.231,
-                0.231,
-                0.668,
+                0.81,
+                0.35,
+                0.18,
+                0.42,
             ],
             camera_attribs={"fovy": "58"} # from RealSense D435i
         )
