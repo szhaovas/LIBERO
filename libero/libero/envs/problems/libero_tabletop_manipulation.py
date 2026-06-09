@@ -255,7 +255,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
     repair_retry_limit = 5
 
     def __init__(
-        self, bddl_file_name, *args, env_params=None, repair_config=None, **kwargs
+        self, bddl_file_name, *args, env_params=None, check_valid=True, repair_config=None, **kwargs
     ):
         super().__init__(bddl_file_name, *args, **kwargs)
 
@@ -263,6 +263,8 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         # overwritten
         if env_params is not None:
             self._env_params = env_params.copy()
+
+        self._check_valid = check_valid
 
         self._repair_config = repair_config
         if self._repair_config is not None:
@@ -618,17 +620,18 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
             # Set object arrangement
             self._place_objects(self.env_params[:obj_xy_end_idx])
 
-            try:
-                self.check_valid_env()
-            except Exception as e:
-                if self._repair_config is not None:
-                    print(e)
-                    try:
-                        self.try_milp_repair()
-                    except:
+            if self._check_valid:
+                try:
+                    self.check_valid_env()
+                except Exception as e:
+                    if self._repair_config is not None:
+                        print(e)
+                        try:
+                            self.try_milp_repair()
+                        except:
+                            raise
+                    else:
                         raise
-                else:
-                    raise
 
         observations = (
             self.viewer._get_observations(force_update=True)
