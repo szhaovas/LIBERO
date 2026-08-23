@@ -737,8 +737,9 @@ class BDDLBaseDomain(SingleArmEnv):
 
         # Reset all object positions using initializer sampler if we're not directly loading from an xml
         if not self.deterministic_reset:
+            skip_object_sampling = getattr(self, "_skip_object_sampling", False)
 
-            # Sample from the placement initializer for all objects
+            # Sample fixture properties such as open / closed articulation.
             for object_property_initializer in self.object_property_initializers:
                 if isinstance(object_property_initializer, OpenCloseSampler):
                     joint_pos = object_property_initializer.sample()
@@ -756,6 +757,13 @@ class BDDLBaseDomain(SingleArmEnv):
             mujoco.mj_step1(self.sim.model._model, self.sim.data._data)
 
             object_placements = self.placement_initializer.sample()
+            for obj_pos, obj_quat, obj in object_placements.values():
+                if obj.name in self.fixtures_dict:
+                    body_id = self.sim.model.body_name2id(obj.root_body)
+                    self.sim.model.body_pos[body_id] = obj_pos
+                    self.sim.model.body_quat[body_id] = obj_quat
+            self.sim.forward()
+
             object_placements = self.conditional_placement_initializer.sample(
                 self.sim, object_placements
             )
@@ -764,14 +772,15 @@ class BDDLBaseDomain(SingleArmEnv):
                     object_placements
                 )
             )
+            self._sampled_object_placements = object_placements
             for obj_pos, obj_quat, obj in object_placements.values():
-                if obj.name not in list(self.fixtures_dict.keys()):
+                if obj.name not in self.fixtures_dict and not skip_object_sampling:
                     # This is for movable object resetting
                     self.sim.data.set_joint_qpos(
                         obj.joints[-1],
                         np.concatenate([np.array(obj_pos), np.array(obj_quat)]),
                     )
-                else:
+                elif obj.name in self.fixtures_dict:
                     # This is for fixture resetting
                     body_id = self.sim.model.body_name2id(obj.root_body)
                     self.sim.model.body_pos[body_id] = obj_pos

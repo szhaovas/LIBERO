@@ -251,22 +251,22 @@ class Libero_Tabletop_Manipulation(BDDLBaseDomain):
 
 
 class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
-    table_bounds = [-0.6, -0.61, 0.45, 0.59]
     repair_retry_limit = 5
 
     def __init__(
         self, bddl_file_name, *args, env_params=None, check_valid=True, repair_config=None, **kwargs
     ):
-        super().__init__(bddl_file_name, *args, **kwargs)
-
-        # env_params have to be processed at the end of reset() or they will get
-        # overwritten
         if env_params is not None:
             self._env_params = env_params.copy()
+            self._skip_object_sampling = True
 
         self._check_valid = check_valid
-
         self._repair_config = repair_config
+
+        self.table_bounds = [-0.6, -0.61, 0.45, 0.59]
+
+        super().__init__(bddl_file_name, *args, **kwargs)
+
         if self._repair_config is not None:
             import docplex.mp.model
 
@@ -361,6 +361,12 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                     f"{movable_obj.name} at {obj_xy} outside of table bounds "
                     f"{self.table_bounds}"
                 )
+
+    def _reset_internal(self):
+        super()._reset_internal()
+
+        if hasattr(self, "_env_params"):
+            self._place_objects(self._env_params[: 2 * len(self.objects_dict)])
 
     def _check_valid_env_task(self):
         raise NotImplementedError
@@ -494,14 +500,27 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         raise NotImplementedError
 
     def _place_objects(self, env_params):
+        object_qpos = {}
         for idx, movable_obj in enumerate(self.objects_dict.values()):
-            # Only update the objects' xy coordinates
+            # Apply the supplied XY coordinates and place each object on the table.
             start_i, _ = self.sim.data.model.get_joint_qpos_addr(
                 movable_obj.joints[-1]
             )
+            object_qpos[movable_obj.name] = start_i
             self.sim.data.qpos[start_i : start_i + 2] = env_params[
                 2 * idx : 2 * idx + 2
             ]
+            sampled_placement = getattr(self, "_sampled_object_placements", {}).get(
+                movable_obj.name
+            )
+            if sampled_placement is None:
+                self.sim.data.qpos[start_i + 2] = (
+                    self.workspace_offset[2]
+                    + self.z_offset
+                    - movable_obj.bottom_offset[-1]
+                )
+            else:
+                self.sim.data.qpos[start_i + 2] = sampled_placement[0][2]
 
         self.sim.forward()
 
@@ -1525,8 +1544,6 @@ class Task_9(Libero_Spatial_Attack):
 
 
 class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
-    table_bounds = [-0.8, -0.4, 0.8, 0.4]
-
     def __init__(
         self, bddl_file_name, *args, env_params=None, repair_config=None, **kwargs
     ):
@@ -1541,6 +1558,8 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
         })
         kwargs.update({"table_full_size": (1.60, 0.80, 0.05)})
         kwargs.update({"workspace_offset": (0, 0, 0.92)})
+
+        self.table_bounds = [-0.8, -0.4, 0.8, 0.4]
 
         super().__init__(bddl_file_name, *args, env_params=env_params, repair_config=repair_config, **kwargs)
 
@@ -1562,6 +1581,17 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
         # Rotating the robot here since set_base_ori gets ignored in init and reset
         self.robots[0].robot_model.set_base_ori((0, 0, np.pi))
 
+    def _check_gripper_contact(self, object_model):
+        gripper_geoms = [
+            geom
+            for geom_group in self.robots[0].gripper.important_geoms.values()
+            for geom in geom_group
+        ]
+        return self.check_contact(gripper_geoms, object_model.contact_geoms)
+
+    def _check_success(self):
+        bowl = self.get_object("akita_black_bowl_1")
+        return self._check_gripper_contact(bowl)
 
 @register_problem
 class Jaco_Custom_Tabletop_Task_0(Jaco_Custom_Tabletop):

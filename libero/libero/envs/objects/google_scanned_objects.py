@@ -64,6 +64,18 @@ class AkitaBlackBowl(GoogleScannedObject):
 
 
 @register_object
+class LargeAkitaBlackBowl(GoogleScannedObject):
+    def __init__(
+        self, name="large_akita_black_bowl", obj_name="large_akita_black_bowl"
+    ):
+        super().__init__(name, obj_name)
+
+    @property
+    def horizontal_radius(self):
+        return 0.085
+
+
+@register_object
 class Plate(GoogleScannedObject):
     def __init__(self, name="plate", obj_name="plate"):
         super().__init__(name, obj_name)
@@ -71,6 +83,16 @@ class Plate(GoogleScannedObject):
     @property
     def horizontal_radius(self):
         return 0.05
+
+
+@register_object
+class LargePlate(GoogleScannedObject):
+    def __init__(self, name="large_plate", obj_name="large_plate"):
+        super().__init__(name, obj_name)
+
+    @property
+    def horizontal_radius(self):
+        return 0.12
 
 
 @register_object
