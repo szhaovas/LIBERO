@@ -1566,12 +1566,12 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
     def _setup_camera(self, mujoco_arena):
         mujoco_arena.set_camera(
             camera_name="agentview",
-            pos=[0.76, -0.45, 1.83],
+            pos=[0.76, 0.45, 1.83],
             quat=[
-                0.81,
-                0.35,
-                0.18,
                 0.42,
+                0.18,
+                0.35,
+                0.82,
             ],
             camera_attribs={"fovy": "58"} # from RealSense D435i
         )
@@ -1579,7 +1579,7 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
     def _load_model(self):
         super()._load_model()
         # Rotating the robot here since set_base_ori gets ignored in init and reset
-        self.robots[0].robot_model.set_base_ori((0, 0, np.pi))
+        self.robots[0].robot_model.set_base_ori((0, 0, 0))
 
     def _check_gripper_contact(self, object_model):
         gripper_geoms = [
@@ -1590,8 +1590,11 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
         return self.check_contact(gripper_geoms, object_model.contact_geoms)
 
     def _check_success(self):
-        bowl = self.get_object("akita_black_bowl_1")
-        return self._check_gripper_contact(bowl)
+        """Check whether the bowl is at least 0.1 meters above the tabletop."""
+        bowl_height = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_1"]
+        ][2]
+        return bool(bowl_height >= self.workspace_offset[2] + 0.1)
 
 @register_problem
 class Jaco_Custom_Tabletop_Task_0(Jaco_Custom_Tabletop):
