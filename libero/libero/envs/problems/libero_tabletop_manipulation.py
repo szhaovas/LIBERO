@@ -513,13 +513,9 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 )
 
         gripper_xyz = self.sim.data.site_xpos[self.robots[0].eef_site_id]
-        if np.any(gripper_xyz[:2] < self.table_bounds[:2]) or np.any(
-            gripper_xyz[:2] > self.table_bounds[2:]
-        ):
-            raise ValueError(
-                f"Gripper at {gripper_xyz} outside of table XY bounds "
-                f"{self.table_bounds}"
-            )
+        # Table XY bounds constrain placed objects, not the robot's workspace.
+        # Native Jaco starts outside that box. Gripper reachability is checked
+        # by IK when applying its pose, with height and collisions checked here.
         if gripper_xyz[2] < self.workspace_offset[2]:
             raise ValueError(
                 f"Gripper at {gripper_xyz} starts below the table surface "
