@@ -257,8 +257,8 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         bddl_file_name: Task definition file.
         *args: Positional arguments forwarded to the tabletop environment.
         env_params: Full ordered XY/scene/yaw/tint/gripper vector, or None for
-            native sampling. Tint coordinates follow scene object order, excluding
-            Akita black bowls whose stock black materials are retained.
+            native sampling. All scene objects and fixtures have tint coordinates
+            in instance order, including both regular and larger black bowls.
         check_valid: Check physical and task constraints after applying parameters.
         repair_config: Optional CPLEX time_limit and seed for invalid placements.
         repair_mask: Optional D-element boolean mask in env_params order. False
@@ -312,51 +312,20 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
 
     @property
     def env_params(self):
-        """Return the environment parameter vector.
+        """Return the full vector in shared scene-instance order.
 
-        Coordinates for movable objects and fixtures come first, followed by
-        scene appearance, object yaw and tint, and the initial gripper position:
+        Groups are object/fixture XY, light XYZ, camera XYZ, table RGB,
+        camera rotation, light specular RGB, object/fixture yaw, object/fixture
+        RGB tint, and initial gripper XYZ. XY, yaw, and tint groups all follow
+        the movable-object order followed by the fixture order. Instance names
+        stay the same when a task swaps in a larger asset model.
 
-          [
-              akita_black_bowl_1_x, akita_black_bowl_1_y,
-              akita_black_bowl_2_x, akita_black_bowl_2_y,
-              cookies_1_x, cookies_1_y,
-              glazed_rim_porcelain_ramekin_1_x,
-              glazed_rim_porcelain_ramekin_1_y,
-              plate_1_x, plate_1_y,
-              wooden_cabinet_1_x, wooden_cabinet_1_y,
-              flat_stove_1_x, flat_stove_1_y,
-              light_x, light_y, light_z,
-              camera_x, camera_y, camera_z,
-              table_r, table_g, table_b,
-              camera_r1, camera_r2, camera_r3,
-              light_spec_r, light_spec_g, light_spec_b,
-              akita_black_bowl_1_yaw, akita_black_bowl_2_yaw,
-              cookies_1_yaw, glazed_rim_porcelain_ramekin_1_yaw,
-              plate_1_yaw, wooden_cabinet_1_yaw, flat_stove_1_yaw,
-              cookies_1_r, cookies_1_g, cookies_1_b,
-              glazed_rim_porcelain_ramekin_1_r,
-              glazed_rim_porcelain_ramekin_1_g,
-              glazed_rim_porcelain_ramekin_1_b,
-              plate_1_r, plate_1_g, plate_1_b,
-              wooden_cabinet_1_r, wooden_cabinet_1_g,
-              wooden_cabinet_1_b,
-              flat_stove_1_r, flat_stove_1_g, flat_stove_1_b,
-              gripper_x, gripper_y, gripper_z,
-          ]
+        Returns:
+            Array of shape (6 * N + 18,), where N counts movable objects and
+            fixtures: 60 coordinates for Spatial and 36 for custom Jaco.
         """
         assert hasattr(self, "_env_params")
         return self._env_params
-
-    def _tinted_objects(self):
-        """Select tintable scene objects in the shared simulator vector order."""
-        # Exclude both bowl sizes so swapping assets preserves the tint layout.
-        return [
-            scene_obj
-            for scene_obj in self._scene_objects()
-            if scene_obj.category_name
-            not in {"akita_black_bowl", "large_akita_black_bowl"}
-        ]
 
     def _configure_repair(self, repair_mask, parameter_bounds):
         """Validate coordinate masks and bounds once, before any repair model."""
@@ -401,7 +370,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         position_xy_end = 2 * scene_object_count
         scene_end = position_xy_end + self.scene_param_count
         yaw_end = scene_end + scene_object_count
-        tint_end = yaw_end + 3 * len(self._tinted_objects())
+        tint_end = yaw_end + 3 * scene_object_count
         return {
             "position_xy": slice(0, position_xy_end),
             "scene": slice(position_xy_end, scene_end),
@@ -891,7 +860,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
             self._set_object_yaws(self.env_params[slices["yaw"]])
             tint_params = self.env_params[slices["tint"]].reshape(-1, 3)
             for scene_obj, tint in zip(
-                self._tinted_objects(), np.clip(tint_params, 0, 1)
+                self._scene_objects(), np.clip(tint_params, 0, 1)
             ):
                 self._set_object_tint(scene_obj.name, tint)
             self._set_initial_gripper_position(
