@@ -251,21 +251,59 @@ class Libero_Tabletop_Manipulation(BDDLBaseDomain):
 
 
 class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
+    """Apply scene parameters and optionally repair invalid object placements.
+
+    Args:
+        bddl_file_name: Task definition file.
+        *args: Positional arguments forwarded to the tabletop environment.
+        env_params: Full ordered XY/scene/yaw/tint/gripper vector, or None for
+            native sampling. Tint coordinates follow scene object order, excluding
+            Akita black bowls whose stock black materials are retained.
+        check_valid: Check physical and task constraints after applying parameters.
+        repair_config: Optional CPLEX time_limit and seed for invalid placements.
+        repair_mask: Optional D-element boolean mask in env_params order. False
+            prevents repair from changing that coordinate's supplied value.
+            Only object/fixture XY coordinates currently support repair.
+        parameter_bounds: Optional D-element sequence of inclusive (lower, upper)
+            pairs or None entries. XY repair obeys these bounds in addition to
+            collision, task, and table constraints. None means no extra bounds.
+        **kwargs: Keyword arguments forwarded to the tabletop environment.
+    """
+
+    table_bounds = [-0.6, -0.61, 0.45, 0.59]
     repair_retry_limit = 5
+    scene_param_count = 15
 
     def __init__(
-        self, bddl_file_name, *args, env_params=None, check_valid=True, repair_config=None, **kwargs
+        self,
+        bddl_file_name,
+        *args,
+        env_params=None,
+        check_valid=True,
+        repair_config=None,
+        repair_mask=None,
+        parameter_bounds=None,
+        **kwargs,
     ):
         if env_params is not None:
-            self._env_params = env_params.copy()
+            self._env_params = np.asarray(env_params, dtype=float).copy()
             self._skip_object_sampling = True
+        elif repair_mask is not None or parameter_bounds is not None:
+            raise ValueError(
+                "Repair masks and bounds require explicit env_params"
+            )
 
         self._check_valid = check_valid
         self._repair_config = repair_config
 
-        self.table_bounds = [-0.6, -0.61, 0.45, 0.59]
-
         super().__init__(bddl_file_name, *args, **kwargs)
+
+        try:
+            if env_params is not None:
+                self._configure_repair(repair_mask, parameter_bounds)
+        except (TypeError, ValueError):
+            self.close()
+            raise
 
         if self._repair_config is not None:
             import docplex.mp.model
@@ -274,8 +312,11 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
 
     @property
     def env_params(self):
-        """For now env_params should be an array listing object coordinates in the
-        following order:
+        """Return the environment parameter vector.
+
+        Coordinates for movable objects and fixtures come first, followed by
+        scene appearance, object yaw and tint, and the initial gripper position:
+
           [
               akita_black_bowl_1_x, akita_black_bowl_1_y,
               akita_black_bowl_2_x, akita_black_bowl_2_y,
@@ -283,15 +324,92 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
               glazed_rim_porcelain_ramekin_1_x,
               glazed_rim_porcelain_ramekin_1_y,
               plate_1_x, plate_1_y,
+              wooden_cabinet_1_x, wooden_cabinet_1_y,
+              flat_stove_1_x, flat_stove_1_y,
               light_x, light_y, light_z,
               camera_x, camera_y, camera_z,
               table_r, table_g, table_b,
               camera_r1, camera_r2, camera_r3,
               light_spec_r, light_spec_g, light_spec_b,
+              akita_black_bowl_1_yaw, akita_black_bowl_2_yaw,
+              cookies_1_yaw, glazed_rim_porcelain_ramekin_1_yaw,
+              plate_1_yaw, wooden_cabinet_1_yaw, flat_stove_1_yaw,
+              cookies_1_r, cookies_1_g, cookies_1_b,
+              glazed_rim_porcelain_ramekin_1_r,
+              glazed_rim_porcelain_ramekin_1_g,
+              glazed_rim_porcelain_ramekin_1_b,
+              plate_1_r, plate_1_g, plate_1_b,
+              wooden_cabinet_1_r, wooden_cabinet_1_g,
+              wooden_cabinet_1_b,
+              flat_stove_1_r, flat_stove_1_g, flat_stove_1_b,
+              gripper_x, gripper_y, gripper_z,
           ]
         """
         assert hasattr(self, "_env_params")
         return self._env_params
+
+    def _tinted_objects(self):
+        """Select tintable scene objects in the shared simulator vector order."""
+        # Multiplying the stock black bowl RGB offers no useful tint variation.
+        return [
+            scene_obj
+            for scene_obj in self._scene_objects()
+            if scene_obj.category_name
+            not in {"akita_black_bowl", "large_akita_black_bowl"}
+        ]
+
+    def _configure_repair(self, repair_mask, parameter_bounds):
+        """Validate coordinate masks and bounds once, before any repair model."""
+        count = self._env_param_slices()["end"]
+        if self._env_params.shape != (count,) or not np.all(np.isfinite(self._env_params)):
+            raise ValueError(f"Expected {count} finite env_params")
+        mask = np.ones(count, dtype=bool) if repair_mask is None else np.asarray(repair_mask)
+        if mask.shape != (count,) or mask.dtype.kind != "b":
+            raise ValueError(f"repair_mask must contain {count} booleans")
+        bounds = np.asarray(
+            [(-np.inf, np.inf) if pair is None else pair for pair in parameter_bounds]
+            if parameter_bounds is not None
+            else [(-np.inf, np.inf)] * count,
+            dtype=float,
+        )
+        if (
+            bounds.shape != (count, 2)
+            or np.any(np.isnan(bounds))
+            or np.any(bounds[:, 0] > bounds[:, 1])
+        ):
+            raise ValueError(f"parameter_bounds must contain {count} ordered pairs or None entries")
+        self._repair_mask = mask.copy()
+        self._parameter_bounds = bounds.copy()
+
+    def _apply_repair_constraints(self):
+        """Keep disabled XY coordinates fixed and restrict every repair to its range."""
+        for index, scene_obj in enumerate(self._scene_objects()):
+            for offset, axis in enumerate("xy"):
+                coordinate = 2 * index + offset
+                variable = self._mdl.get_var_by_name(f"{scene_obj.name}_{axis}")
+                if not self._repair_mask[coordinate]:
+                    self._mdl.add_constraint(variable == self._env_params[coordinate])
+                lower, upper = self._parameter_bounds[coordinate]
+                if np.isfinite(lower):
+                    self._mdl.add_constraint(variable >= lower)
+                if np.isfinite(upper):
+                    self._mdl.add_constraint(variable <= upper)
+
+    def _env_param_slices(self):
+        """Build slices for the canonical environment parameter layout."""
+        scene_object_count = len(self.objects_dict) + len(self.fixtures_dict)
+        position_xy_end = 2 * scene_object_count
+        scene_end = position_xy_end + self.scene_param_count
+        yaw_end = scene_end + scene_object_count
+        tint_end = yaw_end + 3 * len(self._tinted_objects())
+        return {
+            "position_xy": slice(0, position_xy_end),
+            "scene": slice(position_xy_end, scene_end),
+            "yaw": slice(scene_end, yaw_end),
+            "tint": slice(yaw_end, tint_end),
+            "gripper_xyz": slice(tint_end, tint_end + 3),
+            "end": tint_end + 3,
+        }
 
     def _reset_milp(self):
         context = self._docplex_mp_model.Context.make_default_context()
@@ -304,17 +422,55 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         self._mdl = self._docplex_mp_model.Model(context=context)
         self._mdl_costs = []
 
-    def _check_valid_env_basic(self):
-        """Checks that no object overlap and all objects are within the table
-        bounds.
+    def _scene_objects(self):
+        """Return movable objects and fixtures in their parameter order."""
+        return list(
+            chain(self.objects_dict.values(), self.fixtures_dict.values())
+        )
 
-        Raises:
-            ValueError
-        """
-        # Check the movable objects do not overlap
-        for this_obj, other_obj in combinations(
-            chain(self.objects_dict.values(), self.fixtures_dict.values()), 2
-        ):
+    def _ignored_overlap_pair(self, this_obj, other_obj):
+        """Allow task subclasses to exempt an intentional object overlap."""
+        return False
+
+    def _descendant_body_ids(self, object_name):
+        """Find the root and child MuJoCo bodies belonging to one object."""
+        body_ids = {self.obj_body_id[object_name]}
+        for body_id in range(self.sim.model.nbody):
+            if self.sim.model.body_parentid[body_id] in body_ids:
+                body_ids.add(body_id)
+        return body_ids
+
+    def _gripper_collision_object_names(self):
+        """Return scene objects currently contacting a gripper collision geom."""
+        gripper_geom_ids = {
+            self.sim.model.geom_name2id(name)
+            for name in self.robots[0].gripper.contact_geoms
+        }
+        geom_to_object = {}
+        for scene_obj in self._scene_objects():
+            body_ids = self._descendant_body_ids(scene_obj.name)
+            for geom_id in np.flatnonzero(
+                np.isin(self.sim.model.geom_bodyid, list(body_ids))
+            ):
+                geom_to_object[int(geom_id)] = scene_obj.name
+
+        collisions = set()
+        for contact in self.sim.data.contact[: self.sim.data.ncon]:
+            geom_1, geom_2 = int(contact.geom1), int(contact.geom2)
+            if geom_1 in gripper_geom_ids and geom_2 in geom_to_object:
+                collisions.add(geom_to_object[geom_2])
+            elif geom_2 in gripper_geom_ids and geom_1 in geom_to_object:
+                collisions.add(geom_to_object[geom_1])
+        return collisions
+
+    def _check_valid_env_basic(self):
+        """Check scene collisions, table bounds, and gripper feasibility."""
+        scene_objects = self._scene_objects()
+
+        for this_obj, other_obj in combinations(scene_objects, 2):
+            if self._ignored_overlap_pair(this_obj, other_obj):
+                continue
+
             this_x, this_y, this_z = self.sim.data.body_xpos[
                 self.obj_body_id[this_obj.name]
             ]
@@ -326,13 +482,11 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 < this_obj.horizontal_radius + other_obj.horizontal_radius
             ):
                 if this_z >= other_z:
-                    # this_obj is on top
                     clearance = this_z - other_z
                     min_clearance = abs(this_obj.bottom_offset[-1]) + abs(
                         other_obj.top_offset[-1]
                     )
                 else:
-                    # other_obj is on top
                     clearance = other_z - this_z
                     min_clearance = abs(this_obj.top_offset[-1]) + abs(
                         other_obj.bottom_offset[-1]
@@ -345,132 +499,124 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                         f"\t {other_obj.name} at {np.array([other_x, other_y, other_z])}"
                     )
 
-        # Check everything is within the table bounds
-        for movable_obj in self.objects_dict.values():
+        # A circular footprint is conservative for every yaw angle.
+        for scene_obj in scene_objects:
             obj_xy = self.sim.data.body_xpos[
-                self.obj_body_id[movable_obj.name]
+                self.obj_body_id[scene_obj.name]
             ][:2]
             if np.any(
-                obj_xy - movable_obj.horizontal_radius
+                obj_xy - scene_obj.horizontal_radius
                 < [self.table_bounds[0], self.table_bounds[1]]
             ) or np.any(
-                obj_xy + movable_obj.horizontal_radius
+                obj_xy + scene_obj.horizontal_radius
                 > [self.table_bounds[2], self.table_bounds[3]]
             ):
                 raise ValueError(
-                    f"{movable_obj.name} at {obj_xy} outside of table bounds "
+                    f"{scene_obj.name} at {obj_xy} outside of table bounds "
                     f"{self.table_bounds}"
                 )
 
-    def _reset_internal(self):
-        super()._reset_internal()
+        gripper_xyz = self.sim.data.site_xpos[self.robots[0].eef_site_id]
+        # Table XY bounds constrain placed objects, not the robot's workspace.
+        # Reachable gripper poses may lie outside that box. IK checks reachability
+        # when applying the pose; height and collisions are checked here.
+        if gripper_xyz[2] < self.workspace_offset[2]:
+            raise ValueError(
+                f"Gripper at {gripper_xyz} starts below the table surface "
+                f"z={self.workspace_offset[2]}"
+            )
+        collisions = self._gripper_collision_object_names()
+        if collisions:
+            raise ValueError(
+                "Gripper starts in collision with "
+                + ", ".join(sorted(collisions))
+            )
 
+    def _reset_internal(self):
+        """Apply explicit positions after native fixture and support-height setup."""
+        super()._reset_internal()
         if hasattr(self, "_env_params"):
-            self._place_objects(self._env_params[: 2 * len(self.objects_dict)])
+            self._place_objects(
+                self._env_params[self._env_param_slices()["position_xy"]]
+            )
 
     def _check_valid_env_task(self):
         raise NotImplementedError
 
-    def _milp_build_basic_problem(self):
-        """Add constraints to :attr:`_mdl` and costs to :attr:`_mdl_costs` to
-        build a MILP problem whose optimum corresponds to when all movable
-        objects are the closest to their starting locations while satisfying:
-            1. Objects don't overlap with one another
-            2. No object is on the plate at the start
+    def _milp_xy(self, scene_obj):
+        """Return or create the repair variables for an object's XY position."""
+        x, y, _ = self.sim.data.body_xpos[self.obj_body_id[scene_obj.name]]
+        x_var = self._mdl.get_var_by_name(f"{scene_obj.name}_x")
+        y_var = self._mdl.get_var_by_name(f"{scene_obj.name}_y")
+        if x_var is None:
+            x_var = self._mdl.continuous_var(
+                name=f"{scene_obj.name}_x",
+                lb=self.table_bounds[0]
+                + scene_obj.horizontal_radius
+                + 1e-6,
+                ub=self.table_bounds[2]
+                - scene_obj.horizontal_radius
+                - 1e-6,
+            )
+            y_var = self._mdl.continuous_var(
+                name=f"{scene_obj.name}_y",
+                lb=self.table_bounds[1]
+                + scene_obj.horizontal_radius
+                + 1e-6,
+                ub=self.table_bounds[3]
+                - scene_obj.horizontal_radius
+                - 1e-6,
+            )
+            self._mdl_costs.append((x_var - x) ** 2 + (y_var - y) ** 2)
+        return x_var, y_var
 
-        To force objects to be at least some distance apart, we add constraints
-        forcing Linf distance >= horizontal_radius. We use Linf instead of L2
-        distance here because CPLEX only allows convex constraints, and L2 is
-        lower-bounded by Linf.
-        """
-        for this_obj, other_obj in combinations(
-            chain(self.objects_dict.values(), self.fixtures_dict.values()), 2
-        ):
-            this_x, this_y, this_z = self.sim.data.body_xpos[
+    def _milp_site_xy(self, site_name, object_name):
+        """Express a child site's XY pose relative to its repairable object."""
+        scene_obj = self.get_object(object_name)
+        object_x, object_y, _ = self.sim.data.body_xpos[
+            self.obj_body_id[object_name]
+        ]
+        site_x, site_y, _ = self.sim.data.get_site_xpos(site_name)
+        object_x_expr, object_y_expr = self._milp_xy(scene_obj)
+        return (
+            object_x_expr + site_x - object_x,
+            object_y_expr + site_y - object_y,
+        )
+
+    def _milp_build_basic_problem(self):
+        """Build table-bound and collision constraints for repairable objects."""
+        scene_objects = self._scene_objects()
+
+        # Create variables even when an object has no active pairwise constraint.
+        for scene_obj in scene_objects:
+            self._milp_xy(scene_obj)
+
+        for this_obj, other_obj in combinations(scene_objects, 2):
+            if self._ignored_overlap_pair(this_obj, other_obj):
+                continue
+
+            _, _, this_z = self.sim.data.body_xpos[
                 self.obj_body_id[this_obj.name]
             ]
-            this_movable = this_obj.name in self.objects_dict
-            other_x, other_y, other_z = self.sim.data.body_xpos[
+            _, _, other_z = self.sim.data.body_xpos[
                 self.obj_body_id[other_obj.name]
             ]
-            other_movable = other_obj.name in self.objects_dict
+            this_x_var, this_y_var = self._milp_xy(this_obj)
+            other_x_var, other_y_var = self._milp_xy(other_obj)
 
-            if this_movable:
-                this_x_var = self._mdl.get_var_by_name(f"{this_obj.name}_x")
-                this_y_var = self._mdl.get_var_by_name(f"{this_obj.name}_y")
-                if this_x_var is None:
-                    this_x_var = self._mdl.continuous_var(
-                        name=f"{this_obj.name}_x",
-                        lb=self.table_bounds[0]
-                        + this_obj.horizontal_radius
-                        + 1e-6,
-                        ub=self.table_bounds[2]
-                        - this_obj.horizontal_radius
-                        - 1e-6,
-                    )
-                    this_y_var = self._mdl.continuous_var(
-                        name=f"{this_obj.name}_y",
-                        lb=self.table_bounds[1]
-                        + this_obj.horizontal_radius
-                        + 1e-6,
-                        ub=self.table_bounds[3]
-                        - this_obj.horizontal_radius
-                        - 1e-6,
-                    )
-                    # minimize distance from starting location
-                    self._mdl_costs.append(
-                        (this_x_var - this_x) ** 2 + (this_y_var - this_y) ** 2
-                    )
-            else:
-                this_x_var, this_y_var = this_x, this_y
-
-            if other_movable:
-                other_x_var = self._mdl.get_var_by_name(f"{other_obj.name}_x")
-                other_y_var = self._mdl.get_var_by_name(f"{other_obj.name}_y")
-                if other_x_var is None:
-                    other_x_var = self._mdl.continuous_var(
-                        name=f"{other_obj.name}_x",
-                        lb=self.table_bounds[0]
-                        + other_obj.horizontal_radius
-                        + 1e-6,
-                        ub=self.table_bounds[2]
-                        - other_obj.horizontal_radius
-                        - 1e-6,
-                    )
-                    other_y_var = self._mdl.continuous_var(
-                        name=f"{other_obj.name}_y",
-                        lb=self.table_bounds[1]
-                        + other_obj.horizontal_radius
-                        + 1e-6,
-                        ub=self.table_bounds[3]
-                        - other_obj.horizontal_radius
-                        - 1e-6,
-                    )
-                    # minimize distance from starting location
-                    self._mdl_costs.append(
-                        (other_x_var - other_x) ** 2
-                        + (other_y_var - other_y) ** 2
-                    )
-            else:
-                other_x_var, other_y_var = other_x, other_y
-
-            # Force objects to be some Linf distance apart on the xy plane
-            # if they overlap vertically or if one of them is plate_1
             if this_z >= other_z:
-                # this_obj is on top
                 clearance = this_z - other_z
                 min_clearance = abs(this_obj.bottom_offset[-1]) + abs(
                     other_obj.top_offset[-1]
                 )
             else:
-                # other_obj is on top
                 clearance = other_z - this_z
                 min_clearance = abs(this_obj.top_offset[-1]) + abs(
                     other_obj.bottom_offset[-1]
                 )
 
-            if (this_movable or other_movable) and (
-                (clearance < min_clearance - 1e-6)
+            if (
+                clearance < min_clearance - 1e-6
                 or this_obj.name == "plate_1"
                 or other_obj.name == "plate_1"
             ):
@@ -487,42 +633,155 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                     >= threshold
                 )
 
+        # If a supplied gripper pose is in contact, allow repair to move the
+        # offending object away while keeping the requested gripper pose fixed.
+        gripper_x, gripper_y, _ = self.sim.data.site_xpos[
+            self.robots[0].eef_site_id
+        ]
+        for object_name in self._gripper_collision_object_names():
+            scene_obj = self.get_object(object_name)
+            obj_x_var, obj_y_var = self._milp_xy(scene_obj)
+            self._mdl.add_constraint(
+                self._mdl.max(
+                    self._mdl.abs(obj_x_var - gripper_x),
+                    self._mdl.abs(obj_y_var - gripper_y),
+                )
+                >= scene_obj.horizontal_radius + 0.04
+            )
+
     def _milp_build_task_problem(self):
-        """Adds task-specific constraints to :attr:`_mdl` and/or costs to
-        :attr:`_mdl_costs`.
-
-        For example, for task:
-        "Pick the akita black bowl next to the plate and place it on the plate"
-
-        Constraints need to be added to make sure only the first bowl is close
-        to the ramekin.
-        """
+        """Add task-specific constraints to the current repair model."""
         raise NotImplementedError
 
-    def _place_objects(self, env_params):
-        object_qpos = {}
-        for idx, movable_obj in enumerate(self.objects_dict.values()):
-            # Apply the supplied XY coordinates and place each object on the table.
-            start_i, _ = self.sim.data.model.get_joint_qpos_addr(
-                movable_obj.joints[-1]
-            )
-            object_qpos[movable_obj.name] = start_i
-            self.sim.data.qpos[start_i : start_i + 2] = env_params[
-                2 * idx : 2 * idx + 2
-            ]
-            sampled_placement = getattr(self, "_sampled_object_placements", {}).get(
-                movable_obj.name
-            )
-            if sampled_placement is None:
+    def _place_objects(self, position_params):
+        """Apply XY positions, sampled support heights, and fixture positions."""
+        for idx, scene_obj in enumerate(self._scene_objects()):
+            xy = position_params[2 * idx : 2 * idx + 2]
+            if scene_obj.name in self.objects_dict:
+                start_i, _ = self.sim.data.model.get_joint_qpos_addr(
+                    scene_obj.joints[-1]
+                )
+                self.sim.data.qpos[start_i : start_i + 2] = xy
+                sampled_placement = getattr(
+                    self, "_sampled_object_placements", {}
+                ).get(scene_obj.name)
                 self.sim.data.qpos[start_i + 2] = (
-                    self.workspace_offset[2]
+                    sampled_placement[0][2]
+                    if sampled_placement is not None
+                    else self.workspace_offset[2]
                     + self.z_offset
-                    - movable_obj.bottom_offset[-1]
+                    - scene_obj.bottom_offset[-1]
                 )
             else:
-                self.sim.data.qpos[start_i + 2] = sampled_placement[0][2]
-
+                body_id = self.obj_body_id[scene_obj.name]
+                self.sim.model.body_pos[body_id][:2] = xy
         self.sim.forward()
+
+    def _set_object_yaws(self, normalized_yaws):
+        """Map normalized yaws to [-pi, pi] and apply them about world Z."""
+        normalized_yaws = np.asarray(normalized_yaws)
+        if np.any((normalized_yaws < 0) | (normalized_yaws > 1)):
+            raise ValueError("Object yaw parameters must be within [0, 1]")
+
+        yaws = 2 * np.pi * normalized_yaws - np.pi
+        for scene_obj, yaw in zip(self._scene_objects(), yaws):
+            quat = np.array(
+                [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
+            )
+            if scene_obj.name in self.objects_dict:
+                start_i, _ = self.sim.data.model.get_joint_qpos_addr(
+                    scene_obj.joints[-1]
+                )
+                self.sim.data.qpos[start_i + 3 : start_i + 7] = quat
+            else:
+                self.sim.model.body_quat[
+                    self.obj_body_id[scene_obj.name]
+                ] = quat
+        self.sim.forward()
+
+    def _cache_object_tint_baselines(self):
+        """Cache stock RGB values once per model to prevent compounded tints."""
+        if getattr(self, "_tint_baseline_model", None) is self.sim.model:
+            return
+
+        self._tint_baseline_model = self.sim.model
+        self._base_material_rgb = self.sim.model.mat_rgba[:, :3].copy()
+        self._base_geom_rgb = self.sim.model.geom_rgba[:, :3].copy()
+
+    def _set_object_tint(self, object_name, tint):
+        """Multiply an object's stock visual RGB values by the requested tint."""
+        self._cache_object_tint_baselines()
+        body_ids = self._descendant_body_ids(object_name)
+        geom_ids = np.flatnonzero(
+            np.isin(self.sim.model.geom_bodyid, list(body_ids))
+        )
+        material_ids = set()
+        for geom_id in geom_ids:
+            material_id = int(self.sim.model.geom_matid[geom_id])
+            if material_id >= 0:
+                material_ids.add(material_id)
+            elif self.sim.model.geom_group[geom_id] == 1:
+                self.sim.model.geom_rgba[geom_id, :3] = (
+                    self._base_geom_rgb[geom_id] * tint
+                )
+        for material_id in material_ids:
+            self.sim.model.mat_rgba[material_id, :3] = (
+                self._base_material_rgb[material_id] * tint
+            )
+
+    def _set_initial_gripper_position(self, target_position):
+        """Use damped least-squares IK while retaining the stock orientation."""
+        robot = self.robots[0]
+        site_name = robot.gripper.important_sites["grip_site"]
+        target_orientation = self.sim.data.get_site_xmat(site_name).reshape(3, 3).copy()
+        qpos_indexes = np.asarray(robot._ref_joint_pos_indexes)
+        qvel_indexes = np.asarray(robot._ref_joint_vel_indexes)
+        joint_ranges = self.sim.model.jnt_range[robot._ref_joint_indexes]
+
+        for _ in range(200):
+            current_position = self.sim.data.get_site_xpos(site_name).copy()
+            current_orientation = self.sim.data.get_site_xmat(site_name).reshape(3, 3)
+            position_error = target_position - current_position
+            orientation_error = R.from_matrix(
+                target_orientation @ current_orientation.T
+            ).as_rotvec()
+            error = np.concatenate((position_error, orientation_error))
+            if np.linalg.norm(position_error) < 1e-5 and np.linalg.norm(
+                orientation_error
+            ) < 1e-4:
+                break
+
+            jacobian = np.vstack(
+                (
+                    self.sim.data.get_site_jacp(site_name)[:, qvel_indexes],
+                    self.sim.data.get_site_jacr(site_name)[:, qvel_indexes],
+                )
+            )
+            damping = 1e-4
+            joint_delta = jacobian.T @ np.linalg.solve(
+                jacobian @ jacobian.T + damping * np.eye(6), error
+            )
+            delta_norm = np.linalg.norm(joint_delta)
+            if delta_norm > 0.2:
+                joint_delta *= 0.2 / delta_norm
+
+            joint_positions = self.sim.data.qpos[qpos_indexes] + joint_delta
+            limited = joint_ranges[:, 0] != joint_ranges[:, 1]
+            joint_positions[limited] = np.clip(
+                joint_positions[limited],
+                joint_ranges[limited, 0] + 1e-6,
+                joint_ranges[limited, 1] - 1e-6,
+            )
+            robot.set_robot_joint_positions(joint_positions)
+
+        actual_position = self.sim.data.get_site_xpos(site_name).copy()
+        if np.linalg.norm(actual_position - target_position) >= 2e-4:
+            raise ValueError(
+                f"Initial gripper position {target_position} is unreachable; "
+                f"closest IK result was {actual_position}"
+            )
+        self.sim.data.qvel[qvel_indexes] = 0
+        robot.controller.update_initial_joints(robot._joint_positions)
 
     def check_valid_env(self):
         self._check_valid_env_basic()
@@ -534,29 +793,24 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
     def milp_solve_problem(self):
         assert hasattr(self, "_mdl")
         self._mdl.minimize(sum(self._mdl_costs))
-        repaired_params = self._mdl.solve()
+        repaired_solution = self._mdl.solve()
 
-        if repaired_params is not None:
-            repaired_params = np.array(
-                list(
-                    chain.from_iterable(
-                        (
-                            repaired_params.get_value(f"{movable_obj.name}_x"),
-                            repaired_params.get_value(f"{movable_obj.name}_y"),
-                        )
-                        for movable_obj in self.objects_dict.values()
+        if repaired_solution is None:
+            return None
+        return np.array(
+            list(
+                chain.from_iterable(
+                    (
+                        repaired_solution.get_value(f"{scene_obj.name}_x"),
+                        repaired_solution.get_value(f"{scene_obj.name}_y"),
                     )
+                    for scene_obj in self._scene_objects()
                 )
             )
-
-        return repaired_params
+        )
 
     def try_milp_repair(self):
-        """Attemps to repair :attr:`env_params` for :attr:`repair_retry_limit`
-        times. Set :attr:`env_params` to repaired env_params if repair was successful.
-        Otherwise raise ValueError.
-        """
-
+        """Repair parameterized XY positions, or raise after repeated failure."""
         print(f"Repairing env_params: {self.env_params}")
 
         num_milp_retry = 0
@@ -565,79 +819,84 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
 
             self._reset_milp()
             self.milp_build_problem()
+            self._apply_repair_constraints()
             repaired_params = self.milp_solve_problem()
 
             if repaired_params is None:
                 print("\t Failed to find a solution...")
                 num_milp_retry += 1
                 continue
-            else:
-                self._place_objects(repaired_params)
-                try:
-                    self.check_valid_env()
-                except Exception as e:
-                    print(f"\t {e}")
-                    num_milp_retry += 1
-                    continue
 
-                self._env_params[:2*len(self.objects_dict)] = repaired_params
-                print(f"Found new env_params: {self.env_params}")
-                return
+            self._place_objects(repaired_params)
+            try:
+                self.check_valid_env()
+            except Exception as e:
+                print(f"\t {e}")
+                num_milp_retry += 1
+                continue
+
+            position_slice = self._env_param_slices()["position_xy"]
+            self._env_params[position_slice] = repaired_params
+            print(f"Found new env_params: {self.env_params}")
+            return
 
         raise ValueError(
             f"Failed to repair env_params after {self.repair_retry_limit} attempts..."
         )
 
     def reset(self):
-        """Essentially the same reset as in robosuite MujocoEnv except it
-        modifies the environment according to :attr:`env_params` at the end.
-
-        Returns:
-            observations (dict): Same as MujocoEnv reset.
-        """
+        """Reset, then apply the supplied scene and initial gripper parameters."""
         Libero_Tabletop_Manipulation.reset(self)
 
         if hasattr(self, "_env_params"):
-            obj_xy_end_idx = 2 * len(self.objects_dict)
+            slices = self._env_param_slices()
+            if len(self.env_params) != slices["end"]:
+                raise ValueError(
+                    f"Expected {slices['end']} env_params, got "
+                    f"{len(self.env_params)}"
+                )
+            if not np.all(np.isfinite(self.env_params)):
+                raise ValueError("env_params must contain only finite values")
+            scene_params = self.env_params[slices["scene"]]
 
-            # A bunch of modifications inspired from robosuite/utils/mjmod.py
-            # Set lighting position
             self.sim.model.light_pos[self.sim.model.light_name2id("light1")] = (
-                self.env_params[obj_xy_end_idx:obj_xy_end_idx+3]
+                scene_params[:3]
             )
-
-            # Set camera position
             self.sim.model.cam_pos[self.sim.model.camera_name2id("agentview")] = (
-                self.env_params[obj_xy_end_idx+3:obj_xy_end_idx+6]
+                scene_params[3:6]
             )
-
-            # Set material color hint
             self.sim.model.mat_rgba[
                 mujoco.mj_name2id(
                     self.sim.model._model,
                     int(mujoco.mjtObj.mjOBJ_MATERIAL),
                     "table_texture",
                 )
-            ][:-1] = np.clip(self.env_params[obj_xy_end_idx+6:obj_xy_end_idx+9], 0, 1)
-            # TODO: More objects
+            ][:-1] = np.clip(scene_params[6:9], 0, 1)
 
-            # Set camera quaternion
-            camera_R = R.from_quat(
-                self.sim.model.cam_quat[self.sim.model.camera_name2id("agentview")]
+            camera_rotation = R.from_quat(
+                self.sim.model.cam_quat[
+                    self.sim.model.camera_name2id("agentview")
+                ]
             )
-            R_noise = R.from_rotvec(self.env_params[obj_xy_end_idx+9:obj_xy_end_idx+12])
-            camera_R *= R_noise
-            self.sim.model.cam_quat[self.sim.model.camera_name2id("agentview")] = (
-                camera_R.as_quat()
-            )
+            camera_rotation *= R.from_rotvec(scene_params[9:12])
+            self.sim.model.cam_quat[
+                self.sim.model.camera_name2id("agentview")
+            ] = camera_rotation.as_quat()
 
-            # Set lighting specular
             self.sim.model.light_specular[
                 self.sim.model.light_name2id("light1")
-            ] = np.clip(self.env_params[obj_xy_end_idx+12:obj_xy_end_idx+15], 0, 1)
+            ] = np.clip(scene_params[12:15], 0, 1)
 
-            # Set object arrangement
-            self._place_objects(self.env_params[:obj_xy_end_idx])
+            self._place_objects(self.env_params[slices["position_xy"]])
+            self._set_object_yaws(self.env_params[slices["yaw"]])
+            tint_params = self.env_params[slices["tint"]].reshape(-1, 3)
+            for scene_obj, tint in zip(
+                self._tinted_objects(), np.clip(tint_params, 0, 1)
+            ):
+                self._set_object_tint(scene_obj.name, tint)
+            self._set_initial_gripper_position(
+                self.env_params[slices["gripper_xyz"]]
+            )
 
             if self._check_valid:
                 try:
@@ -645,10 +904,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 except Exception as e:
                     if self._repair_config is not None:
                         print(e)
-                        try:
-                            self.try_milp_repair()
-                        except:
-                            raise
+                        self.try_milp_repair()
                     else:
                         raise
 
@@ -657,50 +913,8 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
             if self.viewer_get_obs
             else self._get_observations(force_update=True)
         )
-
         return observations
 
-    def compute_spread_similarity(self):
-        """Computes object clustering measures.
-
-        Returns:
-            spread (float): A float between [0, 1]. The mean pairwise distance
-                to the nearest neighbor normalized by the maximum possible
-                pairwise distance within table bounds.
-            similarity (float): A float between [0, 1]. The average pairwise
-                distance normalized by the maximum possible pairwise distance
-                within table bounds. This is subtracted from 1 so that a higher
-                value means more similar.
-        """
-        max_dist = np.linalg.norm(
-            [
-                self.table_bounds[2] - self.table_bounds[0],  # x range
-                self.table_bounds[3] - self.table_bounds[1],  # y range
-            ]
-        )
-
-        pairwise_dists = np.zeros(
-            (len(self.objects_dict), len(self.objects_dict))
-        )
-        for i, this_obj in enumerate(self.objects_dict.values()):
-            this_xy = self.sim.data.body_xpos[self.obj_body_id[this_obj.name]][
-                :1
-            ]
-            for j, other_obj in enumerate(self.objects_dict.values()):
-                other_xy = self.sim.data.body_xpos[
-                    self.obj_body_id[other_obj.name]
-                ][:2]
-                pairwise_dists[i, j] = (
-                    np.linalg.norm(this_xy - other_xy) / max_dist
-                )
-
-        mean_dist = np.mean(pairwise_dists)
-
-        # Don't count distance to self when taking min
-        np.fill_diagonal(pairwise_dists, np.inf)
-        min_dists = np.min(pairwise_dists, axis=1)
-
-        return np.mean(min_dists), 1 - mean_dist
 
 
 @register_problem
@@ -1050,163 +1264,12 @@ class Task_4(Libero_Spatial_Attack):
         self._milp_build_basic_problem()
         self._milp_build_task_problem()
 
-    def _check_valid_env_basic(self):
-        """Overrides :meth:`Libero_Spatial_Attack._check_valid_env_basic`."""
-        # Check the movable objects do not overlap
-        for this_obj, other_obj in combinations(
-            chain(self.objects_dict.values(), self.fixtures_dict.values()), 2
-        ):
-            # disable overlap check between akita_black_bowl_1 and
-            # wooden_cabinet_1
-            if this_obj.name in [
-                "akita_black_bowl_1",
-                "wooden_cabinet_1",
-            ] and other_obj.name in ["akita_black_bowl_1", "wooden_cabinet_1"]:
-                continue
-
-            this_x, this_y, this_z = self.sim.data.body_xpos[
-                self.obj_body_id[this_obj.name]
-            ]
-            other_x, other_y, other_z = self.sim.data.body_xpos[
-                self.obj_body_id[other_obj.name]
-            ]
-            if (
-                np.linalg.norm((this_x - other_x, this_y - other_y))
-                < this_obj.horizontal_radius + other_obj.horizontal_radius
-            ):
-                if this_z >= other_z:
-                    # this_obj is on top
-                    clearance = this_z - other_z
-                    min_clearance = abs(this_obj.bottom_offset[-1]) + abs(
-                        other_obj.top_offset[-1]
-                    )
-                else:
-                    # other_obj is on top
-                    clearance = other_z - this_z
-                    min_clearance = abs(this_obj.top_offset[-1]) + abs(
-                        other_obj.bottom_offset[-1]
-                    )
-
-                if clearance < min_clearance - 1e-6:
-                    raise ValueError(
-                        "Overlapping objects:\n"
-                        f"\t {this_obj.name} at {np.array([this_x, this_y, this_z])}\n"
-                        f"\t {other_obj.name} at {np.array([other_x, other_y, other_z])}"
-                    )
-
-    def _milp_build_basic_problem(self):
-        """Overrides :meth:`Libero_Spatial_Attack._milp_build_basic_problem`."""
-        for this_obj, other_obj in combinations(
-            chain(self.objects_dict.values(), self.fixtures_dict.values()), 2
-        ):
-            this_x, this_y, this_z = self.sim.data.body_xpos[
-                self.obj_body_id[this_obj.name]
-            ]
-            this_movable = this_obj.name in self.objects_dict
-            other_x, other_y, other_z = self.sim.data.body_xpos[
-                self.obj_body_id[other_obj.name]
-            ]
-            other_movable = other_obj.name in self.objects_dict
-
-            if this_movable:
-                this_x_var = self._mdl.get_var_by_name(f"{this_obj.name}_x")
-                this_y_var = self._mdl.get_var_by_name(f"{this_obj.name}_y")
-                if this_x_var is None:
-                    this_x_var = self._mdl.continuous_var(
-                        name=f"{this_obj.name}_x",
-                        lb=self.table_bounds[0]
-                        + this_obj.horizontal_radius
-                        + 1e-6,
-                        ub=self.table_bounds[2]
-                        - this_obj.horizontal_radius
-                        - 1e-6,
-                    )
-                    this_y_var = self._mdl.continuous_var(
-                        name=f"{this_obj.name}_y",
-                        lb=self.table_bounds[1]
-                        + this_obj.horizontal_radius
-                        + 1e-6,
-                        ub=self.table_bounds[3]
-                        - this_obj.horizontal_radius
-                        - 1e-6,
-                    )
-                    # minimize distance from starting location
-                    self._mdl_costs.append(
-                        (this_x_var - this_x) ** 2 + (this_y_var - this_y) ** 2
-                    )
-            else:
-                this_x_var, this_y_var = this_x, this_y
-
-            if other_movable:
-                other_x_var = self._mdl.get_var_by_name(f"{other_obj.name}_x")
-                other_y_var = self._mdl.get_var_by_name(f"{other_obj.name}_y")
-                if other_x_var is None:
-                    other_x_var = self._mdl.continuous_var(
-                        name=f"{other_obj.name}_x",
-                        lb=self.table_bounds[0]
-                        + other_obj.horizontal_radius
-                        + 1e-6,
-                        ub=self.table_bounds[2]
-                        - other_obj.horizontal_radius
-                        - 1e-6,
-                    )
-                    other_y_var = self._mdl.continuous_var(
-                        name=f"{other_obj.name}_y",
-                        lb=self.table_bounds[1]
-                        + other_obj.horizontal_radius
-                        + 1e-6,
-                        ub=self.table_bounds[3]
-                        - other_obj.horizontal_radius
-                        - 1e-6,
-                    )
-                    # minimize distance from starting location
-                    self._mdl_costs.append(
-                        (other_x_var - other_x) ** 2
-                        + (other_y_var - other_y) ** 2
-                    )
-            else:
-                other_x_var, other_y_var = other_x, other_y
-
-            # disable distance constraint between akita_black_bowl_1 and
-            # wooden_cabinet_1
-            if this_obj.name in [
-                "akita_black_bowl_1",
-                "wooden_cabinet_1",
-            ] and other_obj.name in ["akita_black_bowl_1", "wooden_cabinet_1"]:
-                continue
-
-            # Force objects to be some Linf distance apart on the xy plane
-            # if they overlap vertically
-            if this_z >= other_z:
-                # this_obj is on top
-                clearance = this_z - other_z
-                min_clearance = abs(this_obj.bottom_offset[-1]) + abs(
-                    other_obj.top_offset[-1]
-                )
-            else:
-                # other_obj is on top
-                clearance = other_z - this_z
-                min_clearance = abs(this_obj.top_offset[-1]) + abs(
-                    other_obj.bottom_offset[-1]
-                )
-
-            if (this_movable or other_movable) and (
-                (clearance < min_clearance - 1e-6)
-                or this_obj.name == "plate_1"
-                or other_obj.name == "plate_1"
-            ):
-                threshold = (
-                    this_obj.horizontal_radius
-                    + other_obj.horizontal_radius
-                    + 0.01
-                )
-                self._mdl.add_constraint(
-                    self._mdl.max(
-                        self._mdl.abs(this_x_var - other_x_var),
-                        self._mdl.abs(this_y_var - other_y_var),
-                    )
-                    >= threshold
-                )
+    def _ignored_overlap_pair(self, this_obj, other_obj):
+        """Ignore the bowl/cabinet overlap required by this task."""
+        return {this_obj.name, other_obj.name} == {
+            "akita_black_bowl_1",
+            "wooden_cabinet_1",
+        }
 
     def _check_valid_env_task(self):
         top_layer_x, top_layer_y, top_layer_z = self.sim.data.get_site_xpos(
@@ -1227,8 +1290,8 @@ class Task_4(Libero_Spatial_Attack):
         # overlapping with akita_black_bowl_1, so no need to handle seperately
 
     def _milp_build_task_problem(self):
-        top_layer_x, top_layer_y, _ = self.sim.data.get_site_xpos(
-            "wooden_cabinet_1_top_region"
+        top_layer_x, top_layer_y = self._milp_site_xy(
+            "wooden_cabinet_1_top_region", "wooden_cabinet_1"
         )
         bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
         bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
@@ -1403,8 +1466,8 @@ class Task_7(Libero_Spatial_Attack):
         # overlapping with akita_black_bowl_1, so no need to handle seperately
 
     def _milp_build_task_problem(self):
-        stove_x, stove_y, _ = self.sim.data.get_site_xpos(
-            "flat_stove_1_cook_region"
+        stove_x, stove_y = self._milp_site_xy(
+            "flat_stove_1_cook_region", "flat_stove_1"
         )
         bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
         bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
@@ -1531,9 +1594,9 @@ class Task_9(Libero_Spatial_Attack):
         # akita_black_bowl_1, so no need to handle seperately
 
     def _milp_build_task_problem(self):
-        cabinet_x, cabinet_y, _ = self.sim.data.body_xpos[
-            self.obj_body_id["wooden_cabinet_1"]
-        ]
+        cabinet_x, cabinet_y = self._milp_xy(
+            self.fixtures_dict["wooden_cabinet_1"]
+        )
         bowl_1_x_var = self._mdl.get_var_by_name("akita_black_bowl_1_x")
         bowl_1_y_var = self._mdl.get_var_by_name("akita_black_bowl_1_y")
         self._mdl.add_constraint(bowl_1_x_var == cabinet_x)
@@ -1544,6 +1607,8 @@ class Task_9(Libero_Spatial_Attack):
 
 
 class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
+    table_bounds = [-0.8, -0.4, 0.8, 0.4]
+
     def __init__(
         self, bddl_file_name, *args, env_params=None, repair_config=None, **kwargs
     ):
@@ -1559,8 +1624,6 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
         kwargs.update({"table_full_size": (1.60, 0.80, 0.05)})
         kwargs.update({"workspace_offset": (0, 0, 0.92)})
 
-        self.table_bounds = [-0.8, -0.4, 0.8, 0.4]
-
         super().__init__(bddl_file_name, *args, env_params=env_params, repair_config=repair_config, **kwargs)
 
     def _setup_camera(self, mujoco_arena):
@@ -1573,7 +1636,7 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
                 0.35,
                 0.82,
             ],
-            camera_attribs={"fovy": "58"} # from RealSense D435i
+            camera_attribs={"fovy": "58"},  # from RealSense D435i
         )
 
     def _load_model(self):
@@ -1590,11 +1653,13 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
         return self.check_contact(gripper_geoms, object_model.contact_geoms)
 
     def _check_success(self):
-        """Check whether the bowl is at least 0.1 meters above the tabletop."""
-        bowl_height = self.sim.data.body_xpos[
-            self.obj_body_id["akita_black_bowl_1"]
-        ][2]
-        return bool(bowl_height >= self.workspace_offset[2] + 0.1)
+        """Check whether the bowl clears its tabletop resting height by 0.1 m."""
+        bowl = self.objects_dict["akita_black_bowl_1"]
+        bowl_height = self.sim.data.body_xpos[self.obj_body_id[bowl.name]][2]
+        # The larger bowl's center already exceeds table height + 0.1 at rest.
+        bottom_height = bowl_height + bowl.bottom_offset[2]
+        return bool(bottom_height >= self.workspace_offset[2] + 0.1)
+
 
 @register_problem
 class Jaco_Custom_Tabletop_Task_0(Jaco_Custom_Tabletop):
