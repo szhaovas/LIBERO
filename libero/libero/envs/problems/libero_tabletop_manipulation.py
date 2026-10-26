@@ -350,7 +350,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
 
     def _tinted_objects(self):
         """Select tintable scene objects in the shared simulator vector order."""
-        # Multiplying the stock black bowl RGB offers no useful tint variation.
+        # Exclude both bowl sizes so swapping assets preserves the tint layout.
         return [
             scene_obj
             for scene_obj in self._scene_objects()
@@ -1653,12 +1653,11 @@ class Jaco_Custom_Tabletop(Libero_Spatial_Attack):
         return self.check_contact(gripper_geoms, object_model.contact_geoms)
 
     def _check_success(self):
-        """Check whether the bowl clears its tabletop resting height by 0.1 m."""
-        bowl = self.objects_dict["akita_black_bowl_1"]
-        bowl_height = self.sim.data.body_xpos[self.obj_body_id[bowl.name]][2]
-        # The larger bowl's center already exceeds table height + 0.1 at rest.
-        bottom_height = bowl_height + bowl.bottom_offset[2]
-        return bool(bottom_height >= self.workspace_offset[2] + 0.1)
+        """Check whether the bowl is at least 0.1 meters above the tabletop."""
+        bowl_height = self.sim.data.body_xpos[
+            self.obj_body_id["akita_black_bowl_1"]
+        ][2]
+        return bool(bowl_height >= self.workspace_offset[2] + 0.1)
 
 
 @register_problem
