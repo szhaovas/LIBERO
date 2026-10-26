@@ -251,26 +251,53 @@ class Libero_Tabletop_Manipulation(BDDLBaseDomain):
 
 
 class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
+    """Apply scene parameters and optionally repair invalid object placements.
+
+    Args:
+        bddl_file_name: Task definition file.
+        *args: Positional arguments forwarded to the tabletop environment.
+        env_params: Full ordered XY/scene/yaw/tint/gripper vector, or None for
+            native sampling. Tint coordinates follow scene object order, excluding
+            Akita black bowls whose stock black materials are retained.
+        check_valid: Check physical and task constraints after applying parameters.
+        repair_config: Optional CPLEX time_limit and seed for invalid placements.
+        repair_mask: Optional D-element boolean mask in env_params order. False
+            prevents repair from changing that coordinate's supplied value.
+            Only object/fixture XY coordinates currently support repair.
+        parameter_bounds: Optional D-element sequence of inclusive (lower, upper)
+            pairs or None entries. XY repair obeys these bounds in addition to
+            collision, task, and table constraints. None means no extra bounds.
+        **kwargs: Keyword arguments forwarded to the tabletop environment.
+    """
+
     table_bounds = [-0.6, -0.61, 0.45, 0.59]
     repair_retry_limit = 5
     scene_param_count = 15
-    tinted_object_names = (
-        "cookies_1",
-        "glazed_rim_porcelain_ramekin_1",
-        "plate_1",
-        "wooden_cabinet_1",
-        "flat_stove_1",
-    )
 
     def __init__(
-        self, bddl_file_name, *args, env_params=None, check_valid=True, repair_config=None, **kwargs
+        self,
+        bddl_file_name,
+        *args,
+        env_params=None,
+        check_valid=True,
+        repair_config=None,
+        repair_mask=None,
+        parameter_bounds=None,
+        **kwargs,
     ):
         super().__init__(bddl_file_name, *args, **kwargs)
 
         # env_params have to be processed at the end of reset() or they will get
         # overwritten
-        if env_params is not None:
-            self._env_params = np.asarray(env_params, dtype=float).copy()
+        try:
+            if env_params is not None:
+                self._env_params = np.asarray(env_params, dtype=float).copy()
+                self._configure_repair(repair_mask, parameter_bounds)
+            elif repair_mask is not None or parameter_bounds is not None:
+                raise ValueError("Repair masks and bounds require explicit env_params")
+        except (TypeError, ValueError):
+            self.close()
+            raise
 
         self._check_valid = check_valid
 
@@ -318,13 +345,59 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         assert hasattr(self, "_env_params")
         return self._env_params
 
+    def _tinted_objects(self):
+        """Select tintable scene objects in the shared simulator vector order."""
+        # Multiplying the stock black bowl RGB offers no useful tint variation.
+        return [
+            scene_obj
+            for scene_obj in self._scene_objects()
+            if scene_obj.category_name != "akita_black_bowl"
+        ]
+
+    def _configure_repair(self, repair_mask, parameter_bounds):
+        """Validate coordinate masks and bounds once, before any repair model."""
+        count = self._env_param_slices()["end"]
+        if self._env_params.shape != (count,) or not np.all(np.isfinite(self._env_params)):
+            raise ValueError(f"Expected {count} finite env_params")
+        mask = np.ones(count, dtype=bool) if repair_mask is None else np.asarray(repair_mask)
+        if mask.shape != (count,) or mask.dtype.kind != "b":
+            raise ValueError(f"repair_mask must contain {count} booleans")
+        bounds = np.asarray(
+            [(-np.inf, np.inf) if pair is None else pair for pair in parameter_bounds]
+            if parameter_bounds is not None
+            else [(-np.inf, np.inf)] * count,
+            dtype=float,
+        )
+        if (
+            bounds.shape != (count, 2)
+            or np.any(np.isnan(bounds))
+            or np.any(bounds[:, 0] > bounds[:, 1])
+        ):
+            raise ValueError(f"parameter_bounds must contain {count} ordered pairs or None entries")
+        self._repair_mask = mask.copy()
+        self._parameter_bounds = bounds.copy()
+
+    def _apply_repair_constraints(self):
+        """Keep disabled XY coordinates fixed and restrict every repair to its range."""
+        for index, scene_obj in enumerate(self._scene_objects()):
+            for offset, axis in enumerate("xy"):
+                coordinate = 2 * index + offset
+                variable = self._mdl.get_var_by_name(f"{scene_obj.name}_{axis}")
+                if not self._repair_mask[coordinate]:
+                    self._mdl.add_constraint(variable == self._env_params[coordinate])
+                lower, upper = self._parameter_bounds[coordinate]
+                if np.isfinite(lower):
+                    self._mdl.add_constraint(variable >= lower)
+                if np.isfinite(upper):
+                    self._mdl.add_constraint(variable <= upper)
+
     def _env_param_slices(self):
         """Build slices for the canonical environment parameter layout."""
         scene_object_count = len(self.objects_dict) + len(self.fixtures_dict)
         position_xy_end = 2 * scene_object_count
         scene_end = position_xy_end + self.scene_param_count
         yaw_end = scene_end + scene_object_count
-        tint_end = yaw_end + 3 * len(self.tinted_object_names)
+        tint_end = yaw_end + 3 * len(self._tinted_objects())
         return {
             "position_xy": slice(0, position_xy_end),
             "scene": slice(position_xy_end, scene_end),
@@ -728,6 +801,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
 
             self._reset_milp()
             self.milp_build_problem()
+            self._apply_repair_constraints()
             repaired_params = self.milp_solve_problem()
 
             if repaired_params is None:
@@ -798,10 +872,10 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
             self._place_objects(self.env_params[slices["position_xy"]])
             self._set_object_yaws(self.env_params[slices["yaw"]])
             tint_params = self.env_params[slices["tint"]].reshape(-1, 3)
-            for object_name, tint in zip(
-                self.tinted_object_names, np.clip(tint_params, 0, 1)
+            for scene_obj, tint in zip(
+                self._tinted_objects(), np.clip(tint_params, 0, 1)
             ):
-                self._set_object_tint(object_name, tint)
+                self._set_object_tint(scene_obj.name, tint)
             self._set_initial_gripper_position(
                 self.env_params[slices["gripper_xyz"]]
             )
@@ -823,47 +897,6 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         )
         return observations
 
-    def compute_spread_similarity(self):
-        """Computes object clustering measures.
-
-        Returns:
-            spread (float): A float between [0, 1]. The mean pairwise distance
-                to the nearest neighbor normalized by the maximum possible
-                pairwise distance within table bounds.
-            similarity (float): A float between [0, 1]. The average pairwise
-                distance normalized by the maximum possible pairwise distance
-                within table bounds. This is subtracted from 1 so that a higher
-                value means more similar.
-        """
-        max_dist = np.linalg.norm(
-            [
-                self.table_bounds[2] - self.table_bounds[0],  # x range
-                self.table_bounds[3] - self.table_bounds[1],  # y range
-            ]
-        )
-
-        pairwise_dists = np.zeros(
-            (len(self.objects_dict), len(self.objects_dict))
-        )
-        for i, this_obj in enumerate(self.objects_dict.values()):
-            this_xy = self.sim.data.body_xpos[self.obj_body_id[this_obj.name]][
-                :1
-            ]
-            for j, other_obj in enumerate(self.objects_dict.values()):
-                other_xy = self.sim.data.body_xpos[
-                    self.obj_body_id[other_obj.name]
-                ][:2]
-                pairwise_dists[i, j] = (
-                    np.linalg.norm(this_xy - other_xy) / max_dist
-                )
-
-        mean_dist = np.mean(pairwise_dists)
-
-        # Don't count distance to self when taking min
-        np.fill_diagonal(pairwise_dists, np.inf)
-        min_dists = np.min(pairwise_dists, axis=1)
-
-        return np.mean(min_dists), 1 - mean_dist
 
 
 @register_problem
