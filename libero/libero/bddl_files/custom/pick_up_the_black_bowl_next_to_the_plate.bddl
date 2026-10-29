@@ -19,7 +19,7 @@
       (table_center
           (:target main_table)
           (:ranges (
-              (0.135 0.105 0.145 0.115)
+              (0.14 0.09 0.16 0.13)
             )
           )
       )

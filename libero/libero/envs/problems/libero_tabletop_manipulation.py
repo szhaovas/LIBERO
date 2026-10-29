@@ -260,18 +260,20 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
             native sampling. All scene objects and fixtures have tint coordinates
             in instance order, including both regular and larger black bowls.
         check_valid: Check physical and task constraints after applying parameters.
-        repair_config: Optional CPLEX time_limit and seed for invalid placements.
+        repair_config: Optional repair settings. method is "milp" (default) or
+            "resample". MILP uses time_limit and seed. Resampling uses sigma
+            (default 0.04), max_retries (default 10), and an optional seed.
+            Sigma is a scalar standard deviation in parameter coordinates.
         repair_mask: Optional D-element boolean mask in env_params order. False
             prevents repair from changing that coordinate's supplied value.
-            Only object/fixture XY coordinates currently support repair.
+            MILP changes only XY; resampling can change any enabled coordinate.
         parameter_bounds: Optional D-element sequence of inclusive (lower, upper)
-            pairs or None entries. XY repair obeys these bounds in addition to
-            collision, task, and table constraints. None means no extra bounds.
+            pairs or None entries. Both methods obey these bounds in addition
+            to collision, task, and table constraints. None is unbounded.
         **kwargs: Keyword arguments forwarded to the tabletop environment.
     """
 
     table_bounds = [-0.6, -0.61, 0.45, 0.59]
-    repair_retry_limit = 5
     scene_param_count = 15
 
     def __init__(
@@ -295,6 +297,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
 
         self._check_valid = check_valid
         self._repair_config = repair_config
+        self._configure_repair_method()
 
         super().__init__(bddl_file_name, *args, **kwargs)
 
@@ -305,7 +308,7 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
             self.close()
             raise
 
-        if self._repair_config is not None:
+        if self._repair_method == "milp":
             import docplex.mp.model
 
             self._docplex_mp_model = docplex.mp.model
@@ -326,6 +329,30 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         """
         assert hasattr(self, "_env_params")
         return self._env_params
+
+    def _configure_repair_method(self):
+        """Validate repair options before allocating simulator resources."""
+        self._repair_method = None
+        if self._repair_config is None:
+            return
+        self._repair_method = self._repair_config.get("method", "milp")
+        if self._repair_method not in ("milp", "resample"):
+            raise ValueError("repair_config.method must be 'milp' or 'resample'")
+        if self._repair_method == "resample":
+            sigma = self._repair_config.get("sigma", 0.04)
+            if (
+                isinstance(sigma, bool)
+                or not isinstance(sigma, (int, float, np.integer, np.floating))
+                or not np.isfinite(sigma)
+                or sigma <= 0
+            ):
+                raise ValueError("repair_config.sigma must be finite and positive")
+            retries = self._repair_config.get("max_retries", 10)
+            if isinstance(retries, bool) or not isinstance(retries, (int, np.integer)) or retries < 0:
+                raise ValueError("repair_config.max_retries must be a nonnegative integer")
+            self._resample_sigma = float(sigma)
+            self._resample_max_retries = int(retries)
+            self._repair_rng = np.random.default_rng(self._repair_config.get("seed"))
 
     def _configure_repair(self, repair_mask, parameter_bounds):
         """Validate coordinate masks and bounds once, before any repair model."""
@@ -779,61 +806,45 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
         )
 
     def try_milp_repair(self):
-        """Repair parameterized XY positions, or raise after repeated failure."""
+        """Repair enabled XY positions in place using the configured MILP solver.
+
+        Returns:
+            None. Accepted XY coordinates replace the values in env_params.
+
+        Raises:
+            ValueError: No valid repair was found within repair_retry_limit.
+        """
         print(f"Repairing env_params: {self.env_params}")
 
-        num_milp_retry = 0
-        while num_milp_retry < self.repair_retry_limit:
-            print(f"\t Attempt {num_milp_retry}/{self.repair_retry_limit}")
+        self._reset_milp()
+        self.milp_build_problem()
+        self._apply_repair_constraints()
+        repaired_params = self.milp_solve_problem()
 
-            self._reset_milp()
-            self.milp_build_problem()
-            self._apply_repair_constraints()
-            repaired_params = self.milp_solve_problem()
+        if repaired_params is None:
+            raise ValueError(f"Failed to repair env_params...")
 
-            if repaired_params is None:
-                print("\t Failed to find a solution...")
-                num_milp_retry += 1
-                continue
+        self._place_objects(repaired_params)
+        self.check_valid_env()
 
-            self._place_objects(repaired_params)
-            try:
-                self.check_valid_env()
-            except Exception as e:
-                print(f"\t {e}")
-                num_milp_retry += 1
-                continue
+        position_slice = self._env_param_slices()["position_xy"]
+        self._env_params[position_slice] = repaired_params
+        print(f"Found new env_params: {self.env_params}")
 
-            position_slice = self._env_param_slices()["position_xy"]
-            self._env_params[position_slice] = repaired_params
-            print(f"Found new env_params: {self.env_params}")
-            return
-
-        raise ValueError(
-            f"Failed to repair env_params after {self.repair_retry_limit} attempts..."
-        )
-
-    def reset(self):
-        """Reset, then apply the supplied scene and initial gripper parameters."""
+    def _reset_scene(self):
+        """Reset physics and apply parameters without checking or repairing them."""
         Libero_Tabletop_Manipulation.reset(self)
 
         if hasattr(self, "_env_params"):
             slices = self._env_param_slices()
             if len(self.env_params) != slices["end"]:
-                raise ValueError(
-                    f"Expected {slices['end']} env_params, got "
-                    f"{len(self.env_params)}"
-                )
+                raise ValueError(f"Expected {slices['end']} env_params, got {len(self.env_params)}")
             if not np.all(np.isfinite(self.env_params)):
                 raise ValueError("env_params must contain only finite values")
             scene_params = self.env_params[slices["scene"]]
 
-            self.sim.model.light_pos[self.sim.model.light_name2id("light1")] = (
-                scene_params[:3]
-            )
-            self.sim.model.cam_pos[self.sim.model.camera_name2id("agentview")] = (
-                scene_params[3:6]
-            )
+            self.sim.model.light_pos[self.sim.model.light_name2id("light1")] = scene_params[:3]
+            self.sim.model.cam_pos[self.sim.model.camera_name2id("agentview")] = scene_params[3:6]
             self.sim.model.mat_rgba[
                 mujoco.mj_name2id(
                     self.sim.model._model,
@@ -842,48 +853,84 @@ class Libero_Spatial_Attack(Libero_Tabletop_Manipulation):
                 )
             ][:-1] = np.clip(scene_params[6:9], 0, 1)
 
-            camera_rotation = R.from_quat(
-                self.sim.model.cam_quat[
-                    self.sim.model.camera_name2id("agentview")
-                ]
-            )
+            camera_rotation = R.from_quat(self.sim.model.cam_quat[self.sim.model.camera_name2id("agentview")])
             camera_rotation *= R.from_rotvec(scene_params[9:12])
-            self.sim.model.cam_quat[
-                self.sim.model.camera_name2id("agentview")
-            ] = camera_rotation.as_quat()
+            self.sim.model.cam_quat[self.sim.model.camera_name2id("agentview")] = camera_rotation.as_quat()
 
-            self.sim.model.light_specular[
-                self.sim.model.light_name2id("light1")
-            ] = np.clip(scene_params[12:15], 0, 1)
+            self.sim.model.light_specular[self.sim.model.light_name2id("light1")] = np.clip(
+                scene_params[12:15], 0, 1
+            )
 
             self._place_objects(self.env_params[slices["position_xy"]])
             self._set_object_yaws(self.env_params[slices["yaw"]])
             tint_params = self.env_params[slices["tint"]].reshape(-1, 3)
-            for scene_obj, tint in zip(
-                self._scene_objects(), np.clip(tint_params, 0, 1)
-            ):
+            for scene_obj, tint in zip(self._scene_objects(), np.clip(tint_params, 0, 1)):
                 self._set_object_tint(scene_obj.name, tint)
-            self._set_initial_gripper_position(
-                self.env_params[slices["gripper_xyz"]]
-            )
+            self._set_initial_gripper_position(self.env_params[slices["gripper_xyz"]])
 
-            if self._check_valid:
+    def _try_resample_repair(self):
+        """Try bounded Gaussian draws around the original rejected proposal."""
+        proposal = self.env_params.copy()
+        mask = self._repair_mask
+        bounds = self._parameter_bounds[mask]
+        hard_reset = self.hard_reset
+        accepted = False
+        # A fresh model prevents camera transforms, materials, and physics state
+        # from carrying over from a rejected candidate, even with soft resets.
+        self.hard_reset = True
+        try:
+            for attempt in range(1, self._resample_max_retries + 1):
+                candidate = proposal.copy()
+                candidate[mask] = np.clip(
+                    proposal[mask] + self._repair_rng.normal(0, self._resample_sigma, mask.sum()),
+                    bounds[:, 0],
+                    bounds[:, 1],
+                )
+                self._env_params = candidate
                 try:
+                    self._reset_scene()
                     self.check_valid_env()
-                except Exception as e:
-                    if self._repair_config is not None:
-                        print(e)
-                        self.try_milp_repair()
-                    else:
-                        raise
+                except ValueError as error:
+                    print(f"Resample repair {attempt}/{self._resample_max_retries}: {error}")
+                    continue
+                accepted = True
+                print(f"Resample repair accepted after {attempt} draws: {self.env_params}")
+                return
+            raise ValueError(f"Failed to repair env_params after {self._resample_max_retries} Gaussian draws")
+        finally:
+            self.hard_reset = hard_reset
+            if not accepted:
+                self._env_params = proposal
 
-        observations = (
+    def reset(self):
+        """Reset the scene, repairing an invalid explicit proposal when enabled.
+
+        Returns:
+            Observation dictionary from the accepted scene. Native scenes bypass
+            parameter repair. env_params contains the accepted explicit vector.
+
+        Raises:
+            ValueError: The explicit scene is invalid and repair is disabled or
+                no valid repair was found within the retry limit.
+        """
+        self._reset_scene()
+        if hasattr(self, "_env_params") and self._check_valid:
+            try:
+                self.check_valid_env()
+            except ValueError as error:
+                if self._repair_method is None:
+                    raise
+                print(error)
+                if self._repair_method == "resample":
+                    self._try_resample_repair()
+                else:
+                    self.try_milp_repair()
+
+        return (
             self.viewer._get_observations(force_update=True)
             if self.viewer_get_obs
             else self._get_observations(force_update=True)
         )
-        return observations
-
 
 
 @register_problem
@@ -1024,7 +1071,7 @@ class Task_1(Libero_Spatial_Attack):
     """
 
     next_to_bound = 0.1
-    far_from_bound = 0.2
+    far_from_bound = 0.15
 
     def check_valid_env(self):
         self._check_valid_env_basic()
@@ -1326,7 +1373,7 @@ class Task_6(Libero_Spatial_Attack):
     """
 
     next_to_bound = 0.1
-    far_from_bound = 0.2
+    far_from_bound = 0.15
 
     def check_valid_env(self):
         self._check_valid_env_basic()
@@ -1454,7 +1501,7 @@ class Task_8(Libero_Spatial_Attack):
     """
 
     next_to_bound = 0.1
-    far_from_bound = 0.2
+    far_from_bound = 0.15
 
     def check_valid_env(self):
         self._check_valid_env_basic()
@@ -1700,7 +1747,7 @@ class Jaco_Custom_Tabletop_Task_1(Jaco_Custom_Tabletop):
     """
 
     next_to_bound = 0.1
-    far_from_bound = 0.2
+    far_from_bound = 0.15
 
     def check_valid_env(self):
         self._check_valid_env_basic()

@@ -60,7 +60,7 @@ class AkitaBlackBowl(GoogleScannedObject):
 
     @property
     def horizontal_radius(self):
-        return 0.05
+        return 0.0562
 
 
 @register_object
@@ -72,7 +72,7 @@ class LargeAkitaBlackBowl(GoogleScannedObject):
 
     @property
     def horizontal_radius(self):
-        return 0.085
+        return 0.0956
 
 
 @register_object
@@ -82,7 +82,7 @@ class Plate(GoogleScannedObject):
 
     @property
     def horizontal_radius(self):
-        return 0.05
+        return 0.0688
 
 
 @register_object
@@ -92,7 +92,7 @@ class LargePlate(GoogleScannedObject):
 
     @property
     def horizontal_radius(self):
-        return 0.12
+        return 0.165
 
 
 @register_object
@@ -118,4 +118,4 @@ class GlazedRimPorcelainRamekin(GoogleScannedObject):
 
     @property
     def horizontal_radius(self):
-        return 0.04
+        return 0.0447

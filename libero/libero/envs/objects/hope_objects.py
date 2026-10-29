@@ -74,7 +74,7 @@ class Cookies(HopeBaseObject):
     
     @property
     def horizontal_radius(self):
-        return 0.04
+        return 0.0517
 
 
 @register_object
